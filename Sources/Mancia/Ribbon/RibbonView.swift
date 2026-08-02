@@ -7,11 +7,10 @@ import SwiftUI
 /// one, it falls back to a predictable resting place at the top — under the
 /// menu bar, or under the frontmost window's title bar. See `RibbonPlacement`.
 ///
-/// The lane reads left to right as one sentence: **Target · Action · Direction
-/// · Run**, on a single row. The cells carry no captions: they were the first
-/// thing to go when the row was collapsed to one line, and the resolved action
-/// is spelled out in the Action chip itself instead — which is what the panel
-/// this replaces got wrong by leaving "an empty field means Improve" implicit.
+/// The lane opens with Oops and a Smart Edit disclosure. Smart Edit expands the
+/// row into one sentence: **Target · Action · Direction · Run**. Those cells
+/// carry no captions, and the resolved action is spelled out in the Action chip
+/// itself so an empty Direction meaning Improve is never implicit.
 ///
 /// The lane's width is imposed by `RibbonPlacement`; its height comes from its
 /// content, which is the opposite of how the floating panel sizes itself.
@@ -80,6 +79,7 @@ struct RibbonView: View {
         .onChange(of: model.previewExpanded) { relayout() }
         .onChange(of: model.errorDetailsExpanded) { relayout() }
         .onChange(of: model.errorText) { relayout() }
+        .onChange(of: model.smartEditExpanded) { relayout() }
     }
 
     /// A lane flush against the top of the screen rounds only its bottom
@@ -91,7 +91,7 @@ struct RibbonView: View {
             UnevenRoundedRectangle(
                 topLeadingRadius: 0, bottomLeadingRadius: 12,
                 bottomTrailingRadius: 12, topTrailingRadius: 0, style: .continuous)
-        case .hostWindow, .belowSelection, .aboveSelection, .pointer:
+        case .hostWindow, .belowSelection, .aboveSelection:
             UnevenRoundedRectangle(
                 topLeadingRadius: 12, bottomLeadingRadius: 12,
                 bottomTrailingRadius: 12, topTrailingRadius: 12, style: .continuous)
@@ -104,8 +104,9 @@ struct RibbonView: View {
 
     // MARK: - Command row
 
-    /// One line, read left to right: **Target · Action · Direction**, then the
-    /// trailing cluster — iteration history, live status, Run.
+    /// Oops and Smart Edit at rest. Once disclosed, those entry controls give
+    /// way to **Target · Action · Direction**, then iteration history, live
+    /// status, and Run.
     ///
     /// Each cell used to carry a caption above its value. They were the widest
     /// thing on the lane and said the least: "Selection · 22", "Improve" and a
@@ -116,22 +117,26 @@ struct RibbonView: View {
     private var commandRow: some View {
         HStack(alignment: .top, spacing: 8) {
             Group {
-                oopsControl
-                targetCell
-                actionCell
-                directionCell
+                if model.smartEditExpanded {
+                    targetCell
+                    actionCell
+                    directionCell
+                } else {
+                    oopsControl
+                    smartEditControl
+                }
             }
             .opacity(locked ? 0.5 : 1)
             .disabled(locked)
 
-            // The field stops at its cap and this takes the rest. The slack is
-            // what the version counter and the status word grow into when a run
-            // starts, so the field gives up far less width than it otherwise
-            // would — and what the user typed is much less likely to rewrap
-            // underneath them.
-            Spacer(minLength: 0)
-
-            trailingCluster
+            if model.smartEditExpanded {
+                // The field stops at its cap and this takes the rest. The slack
+                // is what the version counter and status word grow into when a
+                // run starts. Keeping it out of the compact state lets Smart
+                // Edit use its full intrinsic width instead of wrapping.
+                Spacer(minLength: 0)
+                trailingCluster
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -149,7 +154,9 @@ struct RibbonView: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(RibbonPalette.onOops)
                 .labelStyle(.titleAndIcon)
-                .frame(minWidth: 72, minHeight: controlHeight)
+                .frame(
+                    width: RibbonPlacement.compactOopsWidth,
+                    height: controlHeight)
         }
         .buttonStyle(.plain)
         .background(controlShape.fill(RibbonPalette.oops))
@@ -161,6 +168,30 @@ struct RibbonView: View {
         .accessibilityLabel("Oops")
         .accessibilityHint("Corrects text typed with the wrong English or Hebrew keyboard layout")
         .accessibilityIdentifier("Oops")
+    }
+
+    private var smartEditControl: some View {
+        Button { model.showSmartEdit() } label: {
+            Label("Smart Edit", systemImage: "sparkles")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(RibbonPalette.onAction)
+                .labelStyle(.titleAndIcon)
+                .lineLimit(1)
+                .padding(.horizontal, 12)
+                .frame(
+                    width: RibbonPlacement.compactSmartEditWidth,
+                    height: controlHeight)
+        }
+        .buttonStyle(.plain)
+        .background(controlShape.fill(RibbonPalette.action))
+        .contentShape(controlShape)
+        .focusable()
+        .focused($focus, equals: .smartEdit)
+        .ribbonFocusRing(model.focusedCell == .smartEdit, radius: 8, inset: 0)
+        .help("Show AI-powered editing controls")
+        .accessibilityLabel("Smart Edit")
+        .accessibilityHint("Shows target, action, direction, and run controls")
+        .accessibilityIdentifier("SmartEdit")
     }
 
     /// What the edit will touch. A menu while there is a selection to choose

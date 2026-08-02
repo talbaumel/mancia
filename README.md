@@ -9,24 +9,30 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/peteriz/mancia/releases/latest"><img src="https://img.shields.io/github/v/release/peteriz/mancia?display_name=tag" alt="Latest release"></a>
-  <a href="https://github.com/peteriz/mancia/actions/workflows/ci.yml"><img src="https://github.com/peteriz/mancia/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/talbaumel/mancia/releases/latest"><img src="https://img.shields.io/github/v/release/talbaumel/mancia?display_name=tag" alt="Latest release"></a>
+  <a href="https://github.com/talbaumel/mancia/actions/workflows/ci.yml"><img src="https://github.com/talbaumel/mancia/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/macOS-14%2B-black?logo=apple" alt="macOS 14+">
   <img src="https://img.shields.io/badge/Swift-6-orange?logo=swift" alt="Swift 6">
 </p>
 
-Select text anywhere on your Mac, press a shortcut, and say what you want
-changed. Mancia runs the edit through GitHub Copilot CLI and replaces the text
-in place — no chat window, no copy-paste round trip.
-
-<p align="center">
-  <img src="docs/assets/mancia-ribbon.png" alt="A mail draft with a paragraph selected. The Mancia command ribbon sits just below the selection, reading Selection · 204, Your instruction, the typed direction 'make it decisive, one sentence', and a Run button." width="880">
-</p>
+Select text anywhere on your Mac and Mancia opens a compact ribbon beside it.
+Fix text typed with the wrong English or Hebrew keyboard layout locally with
+**Oops**, or open **Smart Edit** and say what you want changed. Smart Edit runs
+through GitHub Copilot CLI and replaces the text in place — no chat window, no
+copy-paste round trip.
 
 - Works in any app with standard **Copy**, **Select All** and **Paste**.
-- The ribbon opens **against the text you selected**, not in a corner of the screen.
-- One-tap **Improve**, three more presets, or a free-form instruction.
+- Opens automatically when you finish selecting text, or on demand from the
+  global shortcut or menu bar.
+- Starts as a small **Oops · Smart Edit** ribbon, then replaces those buttons
+  with the AI controls when you open Smart Edit.
+- Sits against the selected text and aligns horizontally near the pointer that
+  invoked it, instead of opening in a distant corner.
+- **Oops** switches text between English and Hebrew physical-key layouts
+  without calling Copilot.
+- Smart Edit offers one-tap **Improve**, three coding-agent presets, or any
+  free-form instruction.
 - Step back and forth between versions until one is right.
 - Your clipboard is snapshotted and restored after every edit.
 - No telemetry, no Dock icon, no direct calls to any AI API.
@@ -34,13 +40,13 @@ in place — no chat window, no copy-paste round trip.
 ## Install
 
 Download the latest `.dmg` from
-[Releases](https://github.com/peteriz/mancia/releases/latest), open it, and drag
+[Releases](https://github.com/talbaumel/mancia/releases/latest), open it, and drag
 Mancia to **Applications**.
 
 Or build it — Mancia is a Swift Package, with no Xcode project:
 
 ```sh
-git clone https://github.com/peteriz/mancia.git
+git clone https://github.com/talbaumel/mancia.git
 cd mancia
 make app && open build/Mancia.app
 ```
@@ -73,35 +79,65 @@ signed, so macOS asks again after each rebuild.
 ## Use it
 
 1. Select text in any app.
-2. Press <kbd>⌃</kbd><kbd>⌥</kbd><kbd>⌘</kbd><kbd>E</kbd>.
-3. Press <kbd>Return</kbd> to **Improve**, or type an instruction first —
-   *“make it decisive, one sentence”*, *“rewrite in a friendlier tone”*,
-   *“turn these notes into bullets”*.
+2. The compact ribbon opens automatically. You can also press
+   <kbd>⌃</kbd><kbd>⌥</kbd><kbd>⌘</kbd><kbd>E</kbd> or choose **Edit
+   Selection…** from the menu bar.
+3. Choose what the text needs:
+   - **Oops** immediately fixes text typed with the wrong English or Hebrew
+     keyboard layout, replaces it in place, and closes the ribbon. This is a
+     local conversion and does not use Copilot.
+   - **Smart Edit** replaces the compact buttons with Target, Action,
+     Direction, and Run; Oops is no longer shown. Leave Direction empty for
+     **Improve**, choose **Sharpen**, **Plan first**, or **Tighten**, or type
+     your own instruction — *“make it decisive, one sentence”*, *“rewrite in a
+     friendlier tone”*, *“turn these notes into bullets”*.
+4. Press <kbd>Return</kbd> or **Run**. The ribbon stays visible with progress
+   and Cancel controls while Copilot works, then shows the applied result and
+   version navigation.
 
-The result replaces the selection in place. With nothing selected, Mancia takes
-the whole document and asks before overwriting it.
+The result replaces the selection in place. With nothing selected, invoking
+Mancia targets the whole document and, by default, asks before overwriting it.
+Before each run, Mancia checks the live selection and frontmost app so a new
+selection becomes the target instead of silently editing stale text. Click
+outside the ribbon, resume typing in the app underneath it, or press
+<kbd>Esc</kbd> to close it.
+
+The Smart Edit actions are deliberately different:
+
+- **Improve** fixes grammar, wording, and clarity while preserving meaning.
+- **Sharpen** restructures text into a clear instruction for a coding agent.
+- **Plan first** turns an implementation request into an
+  investigate-then-plan request.
+- **Tighten** removes filler while preserving every requirement and concrete
+  detail.
+- **Your instruction** runs exactly the direction you type. When a preset is
+  selected, typed Direction text becomes additional guidance for that preset.
 
 | Key | Does |
 | --- | --- |
-| <kbd>Return</kbd> | Run the edit |
+| <kbd>Return</kbd> | Activate the focused control; initially opens Smart Edit, then runs from Direction or Run |
+| <kbd>⌘</kbd><kbd>Return</kbd> | Run Smart Edit from anywhere in the expanded ribbon |
 | <kbd>←</kbd> / <kbd>→</kbd> | Step between versions |
-| <kbd>Tab</kbd> | Move between the ribbon's cells |
-| <kbd>⌘1</kbd>…<kbd>⌘4</kbd> | Pick an action: Improve, Sharpen, Plan first, Tighten |
-| <kbd>⌘0</kbd> | Back to using your own instruction |
-| <kbd>⌘T</kbd> | Switch target: selection ↔ whole document |
+| <kbd>Tab</kbd> / <kbd>⇧</kbd><kbd>Tab</kbd> | Move forward or backward through the visible ribbon controls |
+| <kbd>⌘1</kbd>…<kbd>⌘4</kbd> | In Smart Edit, pick Improve, Sharpen, Plan first, or Tighten |
+| <kbd>⌘0</kbd> | In Smart Edit, return to using your own instruction |
+| <kbd>⌘T</kbd> | In Smart Edit, switch target: selection ↔ whole document |
 | <kbd>⌘,</kbd> | Settings |
 | <kbd>Esc</kbd> | Close the ribbon |
 
-**Settings** (from the menu bar) changes the global shortcut, whether selecting
-text opens the ribbon automatically, the Copilot model and reasoning effort,
-the CLI path, launch at login, and whether the ribbon closes after an edit.
+**Settings** (from the menu bar) shows shortcut, Accessibility, and Copilot
+readiness. It also changes the global shortcut, whether selecting text opens
+the ribbon automatically, whether whole-document replacement needs
+confirmation, whether the ribbon stays open after an edit, launch at login,
+and — under Advanced — the Copilot model, reasoning effort, and CLI path.
 
 ## Privacy
 
-Mancia has no analytics or telemetry and never calls an AI API directly. It
-passes your selected text and instruction to the local `copilot` process, which
-may send them on to GitHub Copilot services. The pasteboard is used to read and
-replace text, then restored to what it held before.
+Mancia has no analytics or telemetry and never calls an AI API directly.
+**Oops stays entirely local.** Smart Edit passes your selected text and
+instruction to the local `copilot` process, which may send them on to GitHub
+Copilot services. The pasteboard is used to read and replace text, then restored
+to what it held before.
 
 Report a vulnerability through our [security policy](SECURITY.md).
 
@@ -109,7 +145,7 @@ Report a vulnerability through our [security policy](SECURITY.md).
 
 Contributions are welcome — read the [contributing guide](docs/CONTRIBUTING.md)
 and the [Code of Conduct](CODE_OF_CONDUCT.md) first, then
-[open an issue](https://github.com/peteriz/mancia/issues/new/choose) or a pull
+[open an issue](https://github.com/talbaumel/mancia/issues/new/choose) or a pull
 request.
 
 ```sh

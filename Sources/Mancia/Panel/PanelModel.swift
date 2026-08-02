@@ -4,17 +4,17 @@ import Observation
 /// Observable state shared between the panel view and the coordinator that
 /// drives it. The coordinator wires the closures; the view calls them.
 ///
-/// The panel is a cyclical edit session: the describe field and action rows
-/// are always visible (disabled while a request runs), while a status strip
-/// cycles idle → running → applied (iteration navigation) → back, until the
-/// user closes the session.
+/// The panel is a cyclical edit session: Oops stays immediate, while Smart Edit
+/// discloses the provider-backed controls for the rest of the session. Once
+/// disclosed, those controls stay visible (and disable while a request runs)
+/// as the status cycles until the user closes the session.
 @MainActor
 @Observable
 final class PanelModel {
     enum Phase: Equatable { case idle, running, confirm, applied, error }
     enum Scope: Equatable { case selection, document }
     /// The ribbon's focusable cells, listed in Tab order.
-    enum Cell: Hashable, CaseIterable { case oops, target, action, direction, run }
+    enum Cell: Hashable, CaseIterable { case oops, smartEdit, target, action, direction, run }
 
     var phase: Phase = .idle {
         didSet {
@@ -36,6 +36,9 @@ final class PanelModel {
     /// The status line reads "Reading selection…" until this clears.
     var capturing = false
     var instruction = ""
+    /// The provider-backed editing workflow is disclosed on demand so the
+    /// ribbon opens with only its immediate local action and one clear entry.
+    var smartEditExpanded = false
     /// A preset the user pinned from the Action cell, which then runs instead
     /// of the instruction-derived action. `nil` — the default — means the
     /// action is derived from the Direction field, as it always has been.
@@ -77,7 +80,7 @@ final class PanelModel {
     /// Lives on the model because Tab is not a key equivalent: it arrives at
     /// the window, which has no way to reach a view-local `@FocusState`. The
     /// view mirrors this into one, in both directions.
-    var focusedCell: Cell = .direction
+    var focusedCell: Cell = .smartEdit
 
     // Wired by EditCoordinator.
     /// Run an action, optionally with guidance the user typed alongside it.
@@ -101,6 +104,7 @@ final class PanelModel {
         scope = hasSelection ? .selection : .document
         capturing = false
         instruction = ""
+        smartEditExpanded = false
         pinnedPreset = nil
         runningTitle = ""
         showsRunningAnimation = true
@@ -112,8 +116,16 @@ final class PanelModel {
         errorDetailsExpanded = false
         versionCount = 0
         currentIndex = 0
-        focusedCell = .direction
+        focusedCell = .smartEdit
         sessionSeq &+= 1
+    }
+
+    /// Reveal the provider-backed controls and put the insertion point where
+    /// the user can immediately describe the edit they want.
+    func showSmartEdit() {
+        guard !isLocked, !smartEditExpanded else { return }
+        smartEditExpanded = true
+        returnFocusToDirection()
     }
 
     /// ⌘T and the Target menu. Aiming at the selection is inert when there is
@@ -180,8 +192,12 @@ final class PanelModel {
     /// Target drops out of the ring while it is a static label — there is no
     /// selection to choose, so there is nothing there to operate.
     var focusableCells: [Cell] {
-        guard hasSelection, !capturing else { return Cell.allCases.filter { $0 != .target } }
-        return Cell.allCases
+        guard smartEditExpanded else { return [.oops, .smartEdit] }
+        let smartEditCells = Cell.allCases.filter { $0 != .oops && $0 != .smartEdit }
+        guard hasSelection, !capturing else {
+            return smartEditCells.filter { $0 != .target }
+        }
+        return smartEditCells
     }
 
     /// True when the user has typed something to act on, as opposed to leaving

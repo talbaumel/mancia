@@ -1151,21 +1151,29 @@ func panelKeyCommandsResolvePrimaryReturn() {
 func ribbonFocusCycles() {
     let model = PanelModel()
     model.reset(hasSelection: true, charCount: 12)
+    #expect(model.focusedCell == .smartEdit)
+
+    model.moveFocus(.next)
+    #expect(model.focusedCell == .oops)
+    model.moveFocus(.next)
+    #expect(model.focusedCell == .smartEdit)
+
+    model.showSmartEdit()
     #expect(model.focusedCell == .direction)
 
     model.moveFocus(.next)
     #expect(model.focusedCell == .run)
     model.moveFocus(.next)
-    #expect(model.focusedCell == .oops)
-    model.moveFocus(.next)
     #expect(model.focusedCell == .target)
     model.moveFocus(.next)
     #expect(model.focusedCell == .action)
+    model.moveFocus(.next)
+    #expect(model.focusedCell == .direction)
 
     model.moveFocus(.previous)
-    #expect(model.focusedCell == .target)
+    #expect(model.focusedCell == .action)
     model.moveFocus(.previous)
-    #expect(model.focusedCell == .oops)
+    #expect(model.focusedCell == .target)
 }
 
 @MainActor
@@ -1173,19 +1181,19 @@ func ribbonFocusCycles() {
 func ribbonFocusSkipsStaticTarget() {
     let model = PanelModel()
     model.reset(hasSelection: false, charCount: 0)
-    #expect(model.focusableCells == [.oops, .action, .direction, .run])
+    model.showSmartEdit()
+    #expect(model.focusableCells == [.action, .direction, .run])
 
     model.moveFocus(.next)
     #expect(model.focusedCell == .run)
-    model.moveFocus(.next)
-    #expect(model.focusedCell == .oops)
     model.moveFocus(.next)
     #expect(model.focusedCell == .action)
 
     // Capturing hides the menu the same way, so the cell drops out too.
     model.reset(hasSelection: true, charCount: 8)
+    model.showSmartEdit()
     model.capturing = true
-    #expect(model.focusableCells == [.oops, .action, .direction, .run])
+    #expect(model.focusableCells == [.action, .direction, .run])
 }
 
 @MainActor
@@ -1293,13 +1301,15 @@ func ribbonTargetShortcutWaitsForCapture() {
 @Test("A fresh session resets transient ribbon state")
 func ribbonResetClearsTransientState() {
     let model = PanelModel()
+    model.showSmartEdit()
     model.focusedCell = .run
     model.showsRunningAnimation = false
     let before = model.sessionSeq
 
     model.reset(hasSelection: true, charCount: 30)
 
-    #expect(model.focusedCell == .direction)
+    #expect(model.focusedCell == .smartEdit)
+    #expect(!model.smartEditExpanded)
     #expect(model.showsRunningAnimation)
     #expect(
         model.sessionSeq == before &+ 1,
@@ -1601,6 +1611,18 @@ func resetClearsThePin() {
 /// top and a 60pt Dock at the bottom — the ordinary windowed case.
 private let ribbonScreen = CGRect(x: 0, y: 0, width: 1440, height: 900)
 private let ribbonVisible = CGRect(x: 0, y: 60, width: 1440, height: 815)
+
+@Test("Placement honors a compact preferred width")
+func placementUsesPreferredWidth() {
+    let resolved = RibbonPlacement.resolve(
+        height: 48,
+        in: .init(
+            screenFrame: ribbonScreen,
+            visibleFrame: ribbonVisible,
+            preferredWidth: RibbonPlacement.compactWidth))
+
+    #expect(resolved.frame.width == RibbonPlacement.compactWidth)
+}
 
 @Test("A reserved menu-bar strip anchors the lane flush under the menu bar")
 func placementAnchorsUnderTheMenuBar() {
@@ -1975,8 +1997,8 @@ func placementWithoutPointerCentersOnTheHost() {
     #expect(beside.frame.width == resting.frame.width)
 }
 
-@Test("The lane opens beside the captured pointer")
-func placementFollowsThePointer() {
+@Test("The lane opens horizontally near the captured pointer")
+func placementFollowsThePointerHorizontally() {
     let pointer = CGPoint(x: 320, y: 500)
     let resolved = RibbonPlacement.resolve(
         height: 56,
@@ -1985,9 +2007,8 @@ func placementFollowsThePointer() {
             selectionRect: selectionUnderTheMenuBar,
             pointerLocation: pointer))
 
-    #expect(resolved.anchor == .pointer)
     #expect(resolved.frame.minX == pointer.x + RibbonPlacement.pointerClearance)
-    #expect(resolved.frame.midY == pointer.y)
+    #expect(resolved.frame.maxY == selectionUnderTheMenuBar.minY - RibbonPlacement.selectionClearance)
 }
 
 @Test("Pointer-relative placement stays fully on screen")

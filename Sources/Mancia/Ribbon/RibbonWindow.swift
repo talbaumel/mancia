@@ -298,6 +298,7 @@ final class RibbonWindow {
             menuBarHidden: menuBarHidden,
             selectionRect: selectionRect,
             pointerLocation: pointerLocation,
+            preferredWidth: model.smartEditExpanded ? nil : RibbonPlacement.compactWidth,
             establishedAnchor: currentAnchor
         )
     }
@@ -386,11 +387,9 @@ final class RibbonWindow {
             [weak self] _ in
             Task { @MainActor in self?.model.onCancel?() }
         }
-        // The panel opens without activating Mancia. A passive global monitor
-        // therefore sees typing that resumes in the host app without consuming
-        // it: the host receives the key normally while the untouched lane gets
-        // out of the way. Once the user clicks into the lane, its local key
-        // routing owns typing and this monitor does not fire.
+        // A global monitor observes typing that resumes in the host without
+        // consuming it. Input sent to the ribbon itself stays on the local
+        // event path, so Direction and ribbon shortcuts continue to work.
         globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) {
             [weak self] _ in
             Task { @MainActor in self?.model.onCancel?() }
@@ -488,6 +487,8 @@ final class RibbonWindow {
             {
                 if model.focusedCell == .oops {
                     model.runOops()
+                } else if model.focusedCell == .smartEdit {
+                    model.showSmartEdit()
                 } else {
                     model.runPrimary()
                 }
@@ -495,15 +496,25 @@ final class RibbonWindow {
             }
             return false
         }
-        panel.onToggleTarget = { [weak self] in self?.model.toggleScope() }
-        panel.onSelectPreset = { [weak self] index in self?.model.selectPreset(at: index) }
-        panel.onClearPreset = { [weak self] in self?.model.clearPreset() }
+        panel.onToggleTarget = { [weak self] in
+            guard self?.model.smartEditExpanded == true else { return }
+            self?.model.toggleScope()
+        }
+        panel.onSelectPreset = { [weak self] index in
+            guard self?.model.smartEditExpanded == true else { return }
+            self?.model.selectPreset(at: index)
+        }
+        panel.onClearPreset = { [weak self] in
+            guard self?.model.smartEditExpanded == true else { return }
+            self?.model.clearPreset()
+        }
         panel.onOpenSettings = { [weak self] in self?.onOpenSettings?() }
         panel.onSubmit = { [weak self] in
             guard let model = self?.model else { return }
             // Mirror the Return key: inert while a request runs or a
             // whole-document replacement awaits confirmation.
-            guard model.phase != .running, model.phase != .confirm else { return }
+            guard model.smartEditExpanded,
+                model.phase != .running, model.phase != .confirm else { return }
             model.runPrimary()
         }
         return panel
