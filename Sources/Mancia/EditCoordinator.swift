@@ -1,10 +1,9 @@
 import AppKit
 
-/// Orchestrates a cyclical edit session: capture selection → show the ribbon →
-/// run provider → apply inline → navigate between iterations or run further
-/// actions, until the user closes the session. Owns the ribbon and the
-/// in-flight task. The ribbon stays visible throughout — synthetic keystrokes
-/// are posted to the target app's pid, so they can't be swallowed by it.
+/// Orchestrates an edit session: capture selection → show the ribbon → run the
+/// provider → apply inline. Owns the ribbon and the in-flight task. Launching
+/// an action dismisses the ribbon; it returns only when confirmation or error
+/// recovery needs another decision from the user.
 @MainActor
 final class EditCoordinator {
     private let provider: LLMProvider
@@ -46,6 +45,10 @@ final class EditCoordinator {
     /// so a repeated hotkey/menu trigger can't spawn an overlapping capture.
     private var sessionActive = false
     var isSessionActive: Bool { sessionActive }
+    /// A provider action launched from the ribbon is allowed to finish after
+    /// its window disappears. Success then ends the hidden session, while a
+    /// confirmation or failure clears this flag and presents the ribbon again.
+    private var ribbonHiddenForAction = false
     /// A completed whole-document result awaiting explicit confirmation before
     /// it overwrites the document (`.confirm` phase).
     private var pendingApply: (output: String, baseline: String)?
@@ -86,6 +89,7 @@ final class EditCoordinator {
         pendingNote = nil
         pendingOops = false
         pendingApply = nil
+        ribbonHiddenForAction = false
         capture = nil
         versions = []
         currentIndex = 0
@@ -133,8 +137,10 @@ final class EditCoordinator {
     }
 
     private func perform(_ action: EditAction, note: String? = nil) {
+        ribbonHiddenForAction = true
+        ribbon.close(immediately: true)
         // Fired before the background capture finished: queue it and show the
-        // spinner; it runs the moment the selection is ready.
+        // running state off screen; it runs the moment the selection is ready.
         if capturing {
             pendingOops = false
             lastAction = action
@@ -187,7 +193,7 @@ final class EditCoordinator {
                     return
                 }
                 // Apply immediately. Keystrokes are posted to the target
-                // app's pid, so the panel stays visible throughout.
+                // app's pid, so hiding the panel does not intercept them.
                 await applyResolved(output: output, strategy: resolved.strategy, capture: capture)
                 if Task.isCancelled { return }
                 dodgeAppliedText()
@@ -284,6 +290,13 @@ final class EditCoordinator {
         syncIterationState()
         model.instruction = ""
         model.phase = .applied
+        if ribbonHiddenForAction {
+            ribbonHiddenForAction = false
+            currentTask = nil
+            sessionActive = false
+            warmProviderAfterClose()
+            return
+        }
         ribbon.focus()
         scheduleAutoCloseIfHybrid()
     }
@@ -293,12 +306,14 @@ final class EditCoordinator {
     /// Pause a completed whole-document result in the confirm phase, surfacing
     /// the size change so the user can decide before overwriting everything.
     private func presentConfirmation(output: String, baseline: String) {
+        let wasHidden = ribbonHiddenForAction
+        ribbonHiddenForAction = false
         pendingApply = (output, baseline)
         model.pendingOriginalCharCount = baseline.count
         model.pendingResultCharCount = output.count
         model.pendingResultPreview = output
         model.phase = .confirm
-        ribbon.focus()
+        if wasHidden { ribbon.show() } else { ribbon.focus() }
     }
 
     /// Apply the pending whole-document replacement after the user confirmed.
@@ -526,6 +541,7 @@ final class EditCoordinator {
         autoCloseTask?.cancel()
         autoCloseTask = nil
         pendingApply = nil
+        ribbonHiddenForAction = false
         // The review gate's preview is the whole generated document. Esc is a
         // decision like any other, so it discards the text on the same beat
         // confirming or declining does — not at the next session's `reset`.
@@ -600,9 +616,11 @@ final class EditCoordinator {
     }
 
     private func fail(_ message: String) {
+        let wasHidden = ribbonHiddenForAction
+        ribbonHiddenForAction = false
         model.errorText = message
         model.phase = .error
-        ribbon.focus()
+        if wasHidden { ribbon.show() } else { ribbon.focus() }
     }
 
     // MARK: - Accessibility

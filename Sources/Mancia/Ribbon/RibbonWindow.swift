@@ -34,6 +34,7 @@ final class RibbonWindow {
     private var screenObserver: (any NSObjectProtocol)?
     private var localMouseMonitor: Any?
     private var globalMouseMonitor: Any?
+    private var globalKeyMonitor: Any?
     /// Bumped on every `show()`, so an exit animation still in flight when a
     /// new session opens cannot order the new lane out.
     private var presentationSeq = 0
@@ -369,7 +370,9 @@ final class RibbonWindow {
     // MARK: - Outside clicks
 
     private func observeOutsideClicks() {
-        guard localMouseMonitor == nil, globalMouseMonitor == nil else { return }
+        guard localMouseMonitor == nil, globalMouseMonitor == nil, globalKeyMonitor == nil else {
+            return
+        }
         let mouseDown: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
         localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: mouseDown) {
             [weak self] event in
@@ -383,6 +386,15 @@ final class RibbonWindow {
             [weak self] _ in
             Task { @MainActor in self?.model.onCancel?() }
         }
+        // The panel opens without activating Mancia. A passive global monitor
+        // therefore sees typing that resumes in the host app without consuming
+        // it: the host receives the key normally while the untouched lane gets
+        // out of the way. Once the user clicks into the lane, its local key
+        // routing owns typing and this monitor does not fire.
+        globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) {
+            [weak self] _ in
+            Task { @MainActor in self?.model.onCancel?() }
+        }
     }
 
     private func stopObservingOutsideClicks() {
@@ -392,8 +404,12 @@ final class RibbonWindow {
         if let globalMouseMonitor {
             NSEvent.removeMonitor(globalMouseMonitor)
         }
+        if let globalKeyMonitor {
+            NSEvent.removeMonitor(globalKeyMonitor)
+        }
         localMouseMonitor = nil
         globalMouseMonitor = nil
+        globalKeyMonitor = nil
     }
 
     // MARK: - Construction
