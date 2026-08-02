@@ -5,7 +5,12 @@ let package = Package(
     name: "Mancia",
     platforms: [.macOS(.v14)],
     dependencies: [
-        .package(url: "https://github.com/sindresorhus/KeyboardShortcuts", from: "2.0.0"),
+        // 1.16+ contains unguarded #Preview declarations, but standalone
+        // Command Line Tools declares that macro without shipping its plugin.
+        .package(
+            url: "https://github.com/sindresorhus/KeyboardShortcuts",
+            exact: "1.15.0"
+        ),
     ],
     targets: [
         .executableTarget(

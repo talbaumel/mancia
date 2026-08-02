@@ -14,7 +14,7 @@ final class PanelModel {
     enum Phase: Equatable { case idle, running, confirm, applied, error }
     enum Scope: Equatable { case selection, document }
     /// The ribbon's focusable cells, listed in Tab order.
-    enum Cell: Hashable, CaseIterable { case target, action, direction, run }
+    enum Cell: Hashable, CaseIterable { case oops, target, action, direction, run }
 
     var phase: Phase = .idle {
         didSet {
@@ -41,6 +41,10 @@ final class PanelModel {
     /// action is derived from the Direction field, as it always has been.
     var pinnedPreset: PanelPreset?
     var runningTitle = ""
+    /// Local actions such as Oops still use `.running` to lock controls while
+    /// they capture and apply text, but do not need the provider progress
+    /// animation.
+    var showsRunningAnimation = true
     var errorText = ""
     /// Size of the document and the pending result while awaiting confirmation
     /// of a whole-document replacement (`.confirm` phase).
@@ -63,7 +67,7 @@ final class PanelModel {
     /// result) and which version the document currently shows.
     var versionCount = 0
     var currentIndex = 0
-    /// Bumped on every fresh session so the view can refocus the field.
+    /// Bumped on every fresh session so observers can distinguish resets.
     var sessionSeq = 0
     /// Bumped whenever the panel retakes key status (e.g. after the Settings
     /// window closes) so the view puts focus back in the field.
@@ -78,6 +82,8 @@ final class PanelModel {
     // Wired by EditCoordinator.
     /// Run an action, optionally with guidance the user typed alongside it.
     var onPerform: ((EditAction, String?) -> Void)?
+    /// Correct text typed with the English/Hebrew keyboard layout reversed.
+    var onOops: (() -> Void)?
     /// Navigate the document to versions[index].
     var onNavigate: ((Int) -> Void)?
     var onRetry: (() -> Void)?
@@ -97,6 +103,7 @@ final class PanelModel {
         instruction = ""
         pinnedPreset = nil
         runningTitle = ""
+        showsRunningAnimation = true
         errorText = ""
         pendingOriginalCharCount = 0
         pendingResultCharCount = 0
@@ -213,6 +220,11 @@ final class PanelModel {
         } else {
             onPerform?(.custom(trimmed), nil)
         }
+    }
+
+    func runOops() {
+        guard !isLocked else { return }
+        onOops?()
     }
 
     /// Run a preset chosen from the field's dropdown. Anything typed in the

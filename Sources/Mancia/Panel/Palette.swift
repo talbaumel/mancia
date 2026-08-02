@@ -46,10 +46,13 @@ enum Palette {
 
     // MARK: - Helpers
 
-    private static func dynamic(light: Int, dark: Int) -> Color {
+    static func dynamic(
+        light: Int, dark: Int, lightAlpha: CGFloat = 1, darkAlpha: CGFloat = 1
+    ) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in
             let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
             return nsColor(isDark ? dark : light)
+                .withAlphaComponent(isDark ? darkAlpha : lightAlpha)
         })
     }
 

@@ -34,6 +34,7 @@ final class AppSettings {
         static let reasoningEffort = "reasoningEffort"
         static let postApplyBehavior = "postApplyBehavior"
         static let confirmWholeDocumentReplace = "confirmWholeDocumentReplace"
+        static let showRibbonOnTextSelection = "showRibbonOnTextSelection"
     }
 
     private let defaults: UserDefaults
@@ -76,6 +77,11 @@ final class AppSettings {
     /// gated — they are low blast-radius and trivially undone.
     var confirmWholeDocumentReplace: Bool {
         didSet { defaults.set(confirmWholeDocumentReplace, forKey: Key.confirmWholeDocumentReplace) }
+    }
+    /// When true (default), completing a text selection automatically opens
+    /// the ribbon. The global shortcut and menu command remain available when off.
+    var showRibbonOnTextSelection: Bool {
+        didSet { defaults.set(showRibbonOnTextSelection, forKey: Key.showRibbonOnTextSelection) }
     }
 
     /// Designated initializer. `modelCatalog` is injected (rather than always
@@ -139,6 +145,8 @@ final class AppSettings {
         // Default on: absent key means the safety gate is enabled.
         self.confirmWholeDocumentReplace =
             defaults.object(forKey: Key.confirmWholeDocumentReplace) as? Bool ?? true
+        self.showRibbonOnTextSelection =
+            defaults.object(forKey: Key.showRibbonOnTextSelection) as? Bool ?? true
     }
 
     // MARK: - Launch at login

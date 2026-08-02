@@ -208,9 +208,10 @@ The ribbon is the keyboard-first direction; this table is its contract.
 | ⌘, | Settings | Existing |
 | ⌘A/C/V/X/Z/⇧⌘Z | Field editing | Existing `PanelKeyCommand` |
 
-Focus lands in Direction on open, and returns there after every phase
-transition — carried by the existing `sessionSeq` / `focusSeq` counters, which
-already exist for exactly this and must keep working.
+Opening the ribbon does not take keyboard focus from the host application.
+Clicking Direction focuses it normally; explicit panel refocuses, such as
+re-triggering an open session or returning from Settings, put focus back in
+Direction through `focusSeq`.
 
 ## Copy
 

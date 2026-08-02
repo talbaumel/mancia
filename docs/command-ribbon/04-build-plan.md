@@ -183,7 +183,8 @@ confirms; error `Copy` puts the full text on `NSPasteboard.general`.
   after the presets landed. See Q6 in doc 06.)
 - `RibbonWindow` routes them to the model.
 - Tab order Target → Action → Direction → Run via a `@FocusState` enum.
-- Focus lands in Direction on `sessionSeq` / `focusSeq` change, as today.
+- Opening leaves keyboard focus in the host app; explicit refocus through
+  `focusSeq` lands in Direction.
 - ⌘T is inert when `hasSelection == false`, and both are inert while a request
   is in flight — they are resolved above the SwiftUI tree, so they never see
   the `disabled` on the cells.

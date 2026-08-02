@@ -19,18 +19,21 @@ final class RibbonWindow {
     /// lane is transient, and chasing a dragged window would be worse than
     /// staying put.
     private var hostWindow: HostWindowProbe.HostWindow?
-    /// The selection's bounds, read in `show()` — before the lane takes
-    /// focus, after which the system-wide focused element is the Direction
-    /// field and the rect would describe the lane itself. Replaced
-    /// mid-session only on the coordinator's word, in the two moments the
-    /// target app briefly owns focus again: a fresh selection captured for a
-    /// new cycle, and a landed paste the lane was found covering.
+    /// The selection's bounds, read in `show()` while the target app still
+    /// owns focus. Replaced mid-session only on the coordinator's word, when a
+    /// fresh selection is captured for a new cycle or a landed paste is found
+    /// beneath the lane.
     private var selectionRect: CGRect?
+    /// Mouse position captured at presentation time. Held while the lane is
+    /// open so content-driven resizes do not chase later pointer movement.
+    private var pointerLocation: CGPoint?
     /// The edge the lane currently hangs from, which decides both the side it
     /// slides in from and — fed back through `Context` — where it stays for
     /// the rest of the session. Cleared by `show()`.
     private var currentAnchor: RibbonPlacement.Anchor?
     private var screenObserver: (any NSObjectProtocol)?
+    private var localMouseMonitor: Any?
+    private var globalMouseMonitor: Any?
     /// Bumped on every `show()`, so an exit animation still in flight when a
     /// new session opens cannot order the new lane out.
     private var presentationSeq = 0
@@ -66,18 +69,20 @@ final class RibbonWindow {
         self.panel = panel
         hostWindow = HostWindowProbe.frontmostWindow()
         selectionRect = SelectionCapture.selectionScreenRect()
+        pointerLocation = NSEvent.mouseLocation
         currentAnchor = nil
         let resolution = resolveFrame()
         observeScreenChanges()
+        observeOutsideClicks()
         present(panel, at: resolution.frame)
     }
 
-    /// Dismiss the lane. While shown it stays visible permanently — synthetic
-    /// keystrokes are posted to the target app's pid, so the lane never needs
-    /// to get out of their way.
+    /// Dismiss the lane. Synthetic keystrokes are posted to the target app's
+    /// pid, so the lane never needs to get out of their way.
     func close() {
         guard let panel, panel.isVisible else { return }
         stopObservingScreenChanges()
+        stopObservingOutsideClicks()
         let token = presentationSeq
         let resting = panel.frame
         let reduced = reduceMotion
@@ -157,6 +162,7 @@ final class RibbonWindow {
         // cannot answer leaves the last good host in place rather than
         // demoting the lane to the screen.
         if let host = HostWindowProbe.frontmostWindow() { hostWindow = host }
+        pointerLocation = NSEvent.mouseLocation
         currentAnchor = nil
         reposition()
     }
@@ -182,7 +188,7 @@ final class RibbonWindow {
         if reduceMotion {
             panel.setFrame(frame, display: false)
             panel.alphaValue = 0
-            panel.makeKeyAndOrderFront(nil)
+            panel.orderFrontRegardless()
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = Motion.fade
                 panel.animator().alphaValue = 1
@@ -195,7 +201,7 @@ final class RibbonWindow {
             // from below instead.
             panel.setFrame(frame.offsetBy(dx: 0, dy: hiddenOffset(for: frame)), display: false)
             panel.alphaValue = 0
-            panel.makeKeyAndOrderFront(nil)
+            panel.orderFrontRegardless()
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = Motion.entrance
                 context.timingFunction = Motion.curve
@@ -258,7 +264,10 @@ final class RibbonWindow {
             // SwiftUI's update, and measuring before that update has settled
             // reports the height the lane is leaving, not the one it wants.
             onLayoutChange: { [weak self] in
-                Task { @MainActor in self?.reposition() }
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.reposition(animated: self.model.showsRunningAnimation)
+                }
             })
     }
 
@@ -281,6 +290,7 @@ final class RibbonWindow {
             safeAreaTop: screen.safeAreaInsets.top,
             menuBarHidden: menuBarHidden,
             selectionRect: selectionRect,
+            pointerLocation: pointerLocation,
             establishedAnchor: currentAnchor
         )
     }
@@ -348,6 +358,36 @@ final class RibbonWindow {
             NotificationCenter.default.removeObserver(screenObserver)
         }
         screenObserver = nil
+    }
+
+    // MARK: - Outside clicks
+
+    private func observeOutsideClicks() {
+        guard localMouseMonitor == nil, globalMouseMonitor == nil else { return }
+        let mouseDown: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: mouseDown) {
+            [weak self] event in
+            guard let self else { return event }
+            if event.window !== panel {
+                model.onCancel?()
+            }
+            return event
+        }
+        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: mouseDown) {
+            [weak self] _ in
+            Task { @MainActor in self?.model.onCancel?() }
+        }
+    }
+
+    private func stopObservingOutsideClicks() {
+        if let localMouseMonitor {
+            NSEvent.removeMonitor(localMouseMonitor)
+        }
+        if let globalMouseMonitor {
+            NSEvent.removeMonitor(globalMouseMonitor)
+        }
+        localMouseMonitor = nil
+        globalMouseMonitor = nil
     }
 
     // MARK: - Construction
@@ -424,7 +464,11 @@ final class RibbonWindow {
                 model.focusedCell != .direction,
                 model.phase != .running, model.phase != .confirm
             {
-                model.runPrimary()
+                if model.focusedCell == .oops {
+                    model.runOops()
+                } else {
+                    model.runPrimary()
+                }
                 return true
             }
             return false

@@ -3,6 +3,7 @@ import KeyboardShortcuts
 
 extension KeyboardShortcuts.Name {
     /// Global "Edit Selection" hotkey, default ⌃⌥⌘E.
+    @MainActor
     static let editSelection = Self(
         "editSelection",
         default: .init(.e, modifiers: [.control, .option, .command])

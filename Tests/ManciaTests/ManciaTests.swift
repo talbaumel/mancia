@@ -4,6 +4,37 @@ import AppKit
 import KeyboardShortcuts
 @testable import Mancia
 
+// MARK: - Keyboard layout correction
+
+@Test("Oops converts English physical keys to Hebrew")
+func keyboardLayoutEnglishToHebrew() {
+    #expect(KeyboardLayoutConverter.convert("qwerty") == "/׳קראט")
+    #expect(KeyboardLayoutConverter.convert("akuo") == "שלום")
+}
+
+@Test("Oops converts Hebrew physical keys back to English")
+func keyboardLayoutHebrewToEnglish() {
+    #expect(KeyboardLayoutConverter.convert("/׳קראט") == "qwerty")
+    #expect(KeyboardLayoutConverter.convert("שלום") == "akuo")
+}
+
+@Test("Oops preserves spaces, numbers, and unmapped characters")
+func keyboardLayoutPreservesUnmappedCharacters() {
+    #expect(KeyboardLayoutConverter.convert("qwe 123!") == "/׳ק 123!")
+    #expect(KeyboardLayoutConverter.convert("קרא 123!") == "ert 123!")
+}
+
+// MARK: - Automatic selection trigger
+
+@Test("Selection monitor recognizes keyboard selection gestures")
+func selectionMonitorKeyboardGestures() {
+    #expect(SelectionMonitor.canFinishSelection(keyCode: 123, modifiers: [.shift]))
+    #expect(SelectionMonitor.canFinishSelection(keyCode: 56, modifiers: []))
+    #expect(SelectionMonitor.canFinishSelection(keyCode: 0, modifiers: [.command]))
+    #expect(!SelectionMonitor.canFinishSelection(keyCode: 0, modifiers: []))
+    #expect(!SelectionMonitor.canFinishSelection(keyCode: 36, modifiers: []))
+}
+
 // MARK: - Prompt templates
 
 @Test("Every action embeds the input text and the output-only clause")
@@ -327,6 +358,21 @@ func confirmSettingDefaultsOnAndPersists() {
     first.confirmWholeDocumentReplace = false
     let second = AppSettings(defaults: defaults, modelCatalog: { [] })
     #expect(second.confirmWholeDocumentReplace == false)
+}
+
+@MainActor
+@Test("Automatic selection appearance defaults on and persists")
+func selectionAppearanceSettingDefaultsOnAndPersists() {
+    let suite = "mancia-test-\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    let first = AppSettings(defaults: defaults, modelCatalog: { [] })
+    #expect(first.showRibbonOnTextSelection)
+
+    first.showRibbonOnTextSelection = false
+    let second = AppSettings(defaults: defaults, modelCatalog: { [] })
+    #expect(!second.showRibbonOnTextSelection)
 }
 
 @MainActor
@@ -1110,6 +1156,8 @@ func ribbonFocusCycles() {
     model.moveFocus(.next)
     #expect(model.focusedCell == .run)
     model.moveFocus(.next)
+    #expect(model.focusedCell == .oops)
+    model.moveFocus(.next)
     #expect(model.focusedCell == .target)
     model.moveFocus(.next)
     #expect(model.focusedCell == .action)
@@ -1117,7 +1165,7 @@ func ribbonFocusCycles() {
     model.moveFocus(.previous)
     #expect(model.focusedCell == .target)
     model.moveFocus(.previous)
-    #expect(model.focusedCell == .run)
+    #expect(model.focusedCell == .oops)
 }
 
 @MainActor
@@ -1125,17 +1173,19 @@ func ribbonFocusCycles() {
 func ribbonFocusSkipsStaticTarget() {
     let model = PanelModel()
     model.reset(hasSelection: false, charCount: 0)
-    #expect(model.focusableCells == [.action, .direction, .run])
+    #expect(model.focusableCells == [.oops, .action, .direction, .run])
 
     model.moveFocus(.next)
     #expect(model.focusedCell == .run)
+    model.moveFocus(.next)
+    #expect(model.focusedCell == .oops)
     model.moveFocus(.next)
     #expect(model.focusedCell == .action)
 
     // Capturing hides the menu the same way, so the cell drops out too.
     model.reset(hasSelection: true, charCount: 8)
     model.capturing = true
-    #expect(model.focusableCells == [.action, .direction, .run])
+    #expect(model.focusableCells == [.oops, .action, .direction, .run])
 }
 
 @MainActor
@@ -1240,18 +1290,20 @@ func ribbonTargetShortcutWaitsForCapture() {
 }
 
 @MainActor
-@Test("A fresh session asks the view to refocus the field")
-func ribbonResetRefocusesTheField() {
+@Test("A fresh session resets transient ribbon state")
+func ribbonResetClearsTransientState() {
     let model = PanelModel()
     model.focusedCell = .run
+    model.showsRunningAnimation = false
     let before = model.sessionSeq
 
     model.reset(hasSelection: true, charCount: 30)
 
     #expect(model.focusedCell == .direction)
+    #expect(model.showsRunningAnimation)
     #expect(
         model.sessionSeq == before &+ 1,
-        "the lane's hosting view outlives a session, so the bump is what re-asserts focus")
+        "the lane's hosting view outlives a session, so observers need a reset signal")
 }
 
 @MainActor
@@ -1908,8 +1960,8 @@ func placementSitsUnderTheSelectionWithinAFullScreenHost() {
     #expect(resolved.frame.maxY == selection.minY - RibbonPlacement.selectionClearance)
 }
 
-@Test("A lane sitting against the selection is still centered on its host")
-func placementDoesNotChaseTheSelectionSideways() {
+@Test("Without a pointer, a lane sitting against the selection centers on its host")
+func placementWithoutPointerCentersOnTheHost() {
     let resting = RibbonPlacement.resolve(
         height: 56,
         in: .init(screenFrame: ribbonScreen, visibleFrame: ribbonVisible))
@@ -1921,6 +1973,42 @@ func placementDoesNotChaseTheSelectionSideways() {
 
     #expect(beside.frame.minX == resting.frame.minX, "vertical position follows the selection; horizontal does not")
     #expect(beside.frame.width == resting.frame.width)
+}
+
+@Test("The lane opens horizontally near the captured pointer")
+func placementFollowsThePointerHorizontally() {
+    let pointer = CGPoint(x: 320, y: 500)
+    let resolved = RibbonPlacement.resolve(
+        height: 56,
+        in: .init(
+            screenFrame: ribbonScreen, visibleFrame: ribbonVisible,
+            selectionRect: selectionUnderTheMenuBar,
+            pointerLocation: pointer))
+
+    #expect(resolved.frame.minX == pointer.x + RibbonPlacement.pointerClearance)
+    #expect(resolved.frame.maxY == selectionUnderTheMenuBar.minY - RibbonPlacement.selectionClearance)
+}
+
+@Test("Pointer-relative placement stays fully on screen")
+func placementNearThePointerClampsAtScreenEdges() {
+    let resolved = RibbonPlacement.resolve(
+        height: 56,
+        in: .init(
+            screenFrame: ribbonScreen, visibleFrame: ribbonVisible,
+            pointerLocation: CGPoint(x: ribbonScreen.maxX - 5, y: 500)))
+
+    #expect(resolved.frame.maxX == ribbonScreen.maxX)
+}
+
+@Test("A pointer on another display does not pull the lane sideways")
+func placementIgnoresPointerOutsideTargetScreen() {
+    let resolved = RibbonPlacement.resolve(
+        height: 56,
+        in: .init(
+            screenFrame: ribbonScreen, visibleFrame: ribbonVisible,
+            pointerLocation: CGPoint(x: ribbonScreen.maxX + 100, y: 500)))
+
+    #expect(resolved.frame.midX == ribbonVisible.midX)
 }
 
 // MARK: - Ribbon placement: stepping off the applied text

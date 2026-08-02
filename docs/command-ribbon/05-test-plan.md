@@ -156,6 +156,7 @@ The point of these is that the ribbon changed presentation only.
 
 | # | Scenario | Expect |
 |---|---|---|
+| K0 | Select text and let the ribbon appear | Host app keeps keyboard focus; Direction is not focused |
 | K1 | Tab through the lane | Target → Action → Direction → Run, visible focus ring on each |
 | K2 | ⌘1…⌘4, then ⌘T | Action pins Improve/Sharpen/Plan first/Tighten; ⌘T switches target and is inert with no selection. Neither leaks characters into Direction |
 | K3 | ⌘A/C/V/X/Z, ⇧⌘Z in Direction | Standard field editing; undo scoped to the field, never the document |

@@ -152,6 +152,28 @@ enum SelectionCapture {
         return appKitRect(fromAX: axRect)
     }
 
+    /// Whether the focused Accessibility element has selected characters, as
+    /// opposed to the zero-length range reported for an insertion caret.
+    static func hasTextSelection() -> Bool {
+        let systemWide = AXUIElementCreateSystemWide()
+        var focusedValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            systemWide, kAXFocusedUIElementAttribute as CFString, &focusedValue
+        ) == .success, let focusedValue,
+              CFGetTypeID(focusedValue) == AXUIElementGetTypeID() else { return false }
+
+        var rangeValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            focusedValue as! AXUIElement,
+            kAXSelectedTextRangeAttribute as CFString,
+            &rangeValue
+        ) == .success, let rangeValue,
+              CFGetTypeID(rangeValue) == AXValueGetTypeID() else { return false }
+
+        var range = CFRange()
+        return AXValueGetValue(rangeValue as! AXValue, .cfRange, &range) && range.length > 0
+    }
+
     /// Convert an Accessibility rectangle — top-left origin, measured down from
     /// the top of the primary screen — into AppKit screen coordinates, which
     /// have a bottom-left origin.

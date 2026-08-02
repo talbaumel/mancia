@@ -30,6 +30,7 @@ final class EditCoordinator {
     private var capturing = false
     private var pendingAction: EditAction?
     private var pendingNote: String?
+    private var pendingOops = false
     /// The post-apply auto-close beat (hybrid behavior). Cancelled on any panel
     /// key press so the user can keep iterating.
     private var autoCloseTask: Task<Void, Never>?
@@ -44,6 +45,7 @@ final class EditCoordinator {
     /// True from the moment a session begins starting until the panel closes,
     /// so a repeated hotkey/menu trigger can't spawn an overlapping capture.
     private var sessionActive = false
+    var isSessionActive: Bool { sessionActive }
     /// A completed whole-document result awaiting explicit confirmation before
     /// it overwrites the document (`.confirm` phase).
     private var pendingApply: (output: String, baseline: String)?
@@ -58,6 +60,7 @@ final class EditCoordinator {
 
     private func wire() {
         model.onPerform = { [weak self] action, note in self?.perform(action, note: note) }
+        model.onOops = { [weak self] in self?.performOops() }
         model.onNavigate = { [weak self] in self?.navigate(to: $0) }
         model.onRetry = { [weak self] in self?.retry() }
         model.onConfirmApply = { [weak self] in self?.confirmApply() }
@@ -81,6 +84,7 @@ final class EditCoordinator {
         autoCloseTask = nil
         pendingAction = nil
         pendingNote = nil
+        pendingOops = false
         pendingApply = nil
         capture = nil
         versions = []
@@ -92,7 +96,6 @@ final class EditCoordinator {
         model.reset(hasSelection: true, charCount: 0)
         model.capturing = true
         ribbon.show()
-        ribbon.focus()
         warmProvider()
         currentTask = Task {
             let result = await SelectionCapture.captureSelection()
@@ -104,7 +107,10 @@ final class EditCoordinator {
             model.hasSelection = hasSelection
             model.selectionCharCount = result.text?.count ?? 0
             model.scope = hasSelection ? .selection : .document
-            if let pending = pendingAction {
+            if pendingOops {
+                pendingOops = false
+                performOops()
+            } else if let pending = pendingAction {
                 let note = pendingNote
                 pendingAction = nil
                 pendingNote = nil
@@ -130,10 +136,12 @@ final class EditCoordinator {
         // Fired before the background capture finished: queue it and show the
         // spinner; it runs the moment the selection is ready.
         if capturing {
+            pendingOops = false
             lastAction = action
             lastNote = note
             pendingAction = action
             pendingNote = note
+            model.showsRunningAnimation = true
             model.runningTitle = action.progressLabel
             model.phase = .running
             return
@@ -145,6 +153,7 @@ final class EditCoordinator {
         autoCloseTask = nil
         currentTask = Task {
             let previousPhase = model.phase
+            model.showsRunningAnimation = true
             model.runningTitle = action.progressLabel
             model.phase = .running
             guard let resolved = await resolveInput() else {
@@ -190,6 +199,50 @@ final class EditCoordinator {
                 if Task.isCancelled { return }
                 fail(error.localizedDescription)
             }
+        }
+    }
+
+    private func performOops() {
+        if capturing {
+            pendingAction = nil
+            pendingNote = nil
+            pendingOops = true
+            model.showsRunningAnimation = false
+            model.runningTitle = "Fixing keyboard layout"
+            model.phase = .running
+            return
+        }
+        currentTask?.cancel()
+        autoCloseTask?.cancel()
+        autoCloseTask = nil
+        currentTask = Task {
+            let previousPhase = model.phase
+            model.showsRunningAnimation = false
+            model.runningTitle = "Fixing keyboard layout"
+            model.phase = .running
+            guard let resolved = await resolveInput() else {
+                ribbon.focus()
+                if !Task.isCancelled, model.phase == .running { fail("There is no text to edit.") }
+                return
+            }
+            ribbon.focus()
+            if Task.isCancelled { return }
+            guard let capture else { return }
+            let output = KeyboardLayoutConverter.convert(resolved.text)
+            if ApplyConfirmation.isRequired(
+                isWholeDocument: resolved.strategy == .entireDocument,
+                userOptedIn: settings.confirmWholeDocumentReplace
+            ) {
+                presentConfirmation(output: output, baseline: resolved.text)
+                return
+            }
+            await applyResolved(output: output, strategy: resolved.strategy, capture: capture)
+            if Task.isCancelled {
+                model.phase = previousPhase
+                return
+            }
+            dodgeAppliedText()
+            recordApplied(output: output, baseline: resolved.text)
         }
     }
 
@@ -439,6 +492,7 @@ final class EditCoordinator {
         if capturing {
             pendingAction = nil
             pendingNote = nil
+            pendingOops = false
             model.phase = .idle
             ribbon.focus()
             return

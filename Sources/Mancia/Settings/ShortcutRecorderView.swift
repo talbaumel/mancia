@@ -100,19 +100,13 @@ struct ShortcutRecorderView: View {
 
     // MARK: - Display
 
-    /// Symbolic display of a shortcut (e.g. "⌃⌥⌘E"), built without
-    /// KeyboardShortcuts' localized `description`, which pulls in `Bundle.module`.
+    /// Symbolic display of a shortcut (e.g. "⌃⌥⌘E"). KeyboardShortcuts 1.15
+    /// builds this description from its key map without loading a resource
+    /// bundle, so it is safe in Mancia's hand-assembled app bundle.
     @MainActor
     static func display(_ shortcut: KeyboardShortcuts.Shortcut?) -> String? {
         guard let shortcut else { return nil }
-        return modifierSymbols(shortcut.modifiers) + keyGlyph(for: shortcut)
-    }
-
-    @MainActor
-    private static func keyGlyph(for shortcut: KeyboardShortcuts.Shortcut) -> String {
-        guard let equivalent = shortcut.nsMenuItemKeyEquivalent, !equivalent.isEmpty else { return "?" }
-        if equivalent == " " { return "Space" }
-        return equivalent.uppercased()
+        return shortcut.description
     }
 
     /// Canonical macOS order: ⌃⌥⇧⌘.

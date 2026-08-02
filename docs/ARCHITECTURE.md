@@ -14,6 +14,8 @@ Sources/Mancia/
 ├── AppDelegate.swift             Wires status item, hotkey, coordinator, settings window
 ├── StatusBarController.swift     NSStatusItem + menu (Edit / Provider status / Settings / Quit)
 ├── HotkeyManager.swift           Registers the global hotkey (KeyboardShortcuts pkg)
+├── SelectionMonitor.swift        Detects completed mouse/keyboard text selections and
+│                                 opens the ribbon after confirming a nonempty AX range
 ├── Permissions.swift             AXIsProcessTrusted() checks + System Settings deep link
 ├── SelectionCapture.swift        Pasteboard snapshot/capture/replace via synthetic ⌘C/⌘A/⌘V,
 │                                 ⌘Z undo helper, AX caret-rect lookup; keystrokes are
@@ -43,7 +45,7 @@ Sources/Mancia/
 │   │                             with status and iteration beside Run and an error row
 │   ├── RibbonReviewView.swift    The whole-document review gate
 │   ├── RibbonControls.swift      Controls shared across the lane's registers
-│   └── RibbonPalette.swift       The lane's dark-register color tokens
+│   └── RibbonPalette.swift       Appearance-adaptive glass and color tokens
 ├── Providers/
 │   ├── LLMProvider.swift         LLMProvider/WarmableLLMProvider protocols and ProviderStatus
 │   ├── CopilotCLIProvider.swift  GitHub Copilot CLI backend (binary discovery, argv, fallback Process)
@@ -74,11 +76,16 @@ There is no `Resources/` asset catalog — the menu bar icon is the SF Symbol
 ## Core flow
 
 `AppDelegate.applicationDidFinishLaunching` builds one `CopilotCLIProvider`,
-one `EditCoordinator`, one `StatusBarController`, and one `HotkeyManager`, all
-wired to call `coordinator.start()`.
+one `EditCoordinator`, one `StatusBarController`, one `HotkeyManager`, and one
+`SelectionMonitor`, with the manual and automatic triggers wired to call
+`coordinator.start()`.
 
-1. **Trigger** — `HotkeyManager` (global hotkey) or `StatusBarController`
-   ("Edit Selection…") calls `EditCoordinator.start()`.
+1. **Trigger** — `HotkeyManager` (global hotkey), `StatusBarController`
+  ("Edit Selection…"), or `SelectionMonitor` calls `EditCoordinator.start()`.
+  The monitor treats mouse-up and selection-related key-up events as hints,
+  waits briefly for the host to settle, and opens only when Accessibility
+  reports a selected range with nonzero length. The Settings toggle gates the
+  monitor live; disabling it leaves the shortcut and menu command available.
 2. **Capture** — `EditCoordinator.start()` first checks Accessibility
    (`Permissions.isAccessibilityTrusted`; prompts + shows an alert if not
    granted, then bails). It then calls
@@ -123,7 +130,9 @@ wired to call `coordinator.start()`.
    a selection: with nothing selected the target is the whole document and
    there is no line to sit against.
 
-   Vertical position follows the selection; horizontal does not. The lane's
+  Vertical position follows the selection. Horizontally, the lane opens near
+  the mouse position captured at invocation and stays there for the session;
+  it falls back to centering when the pointer is on another display. The lane's
    **width is imposed by placement** (the host's width, clamped to a maximum
    and centered) and only its **height comes from content**, so the view is
    measured at the resolved width before the frame is set. `HostWindowProbe`

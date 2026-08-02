@@ -29,9 +29,9 @@ import CoreGraphics
 /// also why the room beside the selection is judged at `projectedHeight`
 /// rather than the height the lane opens at.
 ///
-/// Vertical position follows the selection; horizontal does not. The lane
-/// stays centered on its host at every anchor, so it never chases the caret
-/// sideways and its controls stay where the hand expects them.
+/// Vertical position follows the selection. Horizontally, the lane opens near
+/// the pointer that invoked it and holds that position for the session; when
+/// no pointer on the target display is available, it centers on the host.
 ///
 /// One amendment after each apply: pasting can put words where the opening
 /// geometry never described them — a longer result flows past the old
@@ -75,6 +75,9 @@ enum RibbonPlacement {
         /// the focused element — which is why `RibbonWindow` snapshots it in
         /// `show()` rather than re-reading it per resolution.
         var selectionRect: CGRect?
+        /// Pointer position captured when the lane opened. It is intentionally
+        /// not live: resizing the lane must not make it chase the mouse.
+        var pointerLocation: CGPoint?
         /// The anchor the lane settled on when it opened, once it has opened.
         ///
         /// Placement is decided once and then held. The lane grows and shrinks
@@ -97,6 +100,7 @@ enum RibbonPlacement {
             safeAreaTop: CGFloat = 0,
             menuBarHidden: Bool = false,
             selectionRect: CGRect? = nil,
+            pointerLocation: CGPoint? = nil,
             establishedAnchor: Anchor? = nil
         ) {
             self.screenFrame = screenFrame
@@ -105,6 +109,7 @@ enum RibbonPlacement {
             self.safeAreaTop = safeAreaTop
             self.menuBarHidden = menuBarHidden
             self.selectionRect = selectionRect
+            self.pointerLocation = pointerLocation
             self.establishedAnchor = establishedAnchor
         }
     }
@@ -163,6 +168,9 @@ enum RibbonPlacement {
     /// against, so the two never touch.
     static let selectionClearance: CGFloat = 8
 
+    /// Horizontal gap between the invocation pointer and the lane.
+    static let pointerClearance: CGFloat = 12
+
     /// The height every fit decision is taken against, whatever the lane
     /// currently measures.
     ///
@@ -194,7 +202,13 @@ enum RibbonPlacement {
         // The minimum wins over the maximum: a lane too narrow to lay out is a
         // worse failure than one wider than its host, which merely overhangs.
         let width = max(minimumWidth, min(host.width, maximumWidth))
-        let x = host.minX + (host.width - width) / 2   // centered on the host
+        let centeredX = host.minX + (host.width - width) / 2
+        // Open just to the pointer's right, like a context surface, without
+        // placing the first control under the cursor. A pointer on another
+        // display is not a placement input.
+        let x = context.pointerLocation.flatMap { pointer in
+            context.screenFrame.contains(pointer) ? pointer.x + pointerClearance : nil
+        } ?? centeredX
 
         // The band the lane is allowed to occupy.
         let ceiling = host.maxY - clearance

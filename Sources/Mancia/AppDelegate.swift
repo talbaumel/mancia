@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var coordinator: EditCoordinator?
     private var statusBar: StatusBarController?
     private var hotkey: HotkeyManager?
+    private var selectionMonitor: SelectionMonitor?
     private var settingsWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -24,6 +25,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.statusBar = statusBar
 
         self.hotkey = HotkeyManager { [weak self] in self?.coordinator?.start() }
+
+        let selectionMonitor = SelectionMonitor(
+            isEnabled: { [weak self] in self?.settings.showRibbonOnTextSelection ?? false },
+            onSelection: { [weak self] in
+                guard let coordinator = self?.coordinator, !coordinator.isSessionActive else { return }
+                coordinator.start()
+            }
+        )
+        selectionMonitor.start()
+        self.selectionMonitor = selectionMonitor
     }
 
     private func showSettings() {

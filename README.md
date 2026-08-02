@@ -92,9 +92,9 @@ the whole document and asks before overwriting it.
 | <kbd>⌘,</kbd> | Settings |
 | <kbd>Esc</kbd> | Close the ribbon |
 
-**Settings** (from the menu bar) changes the global shortcut, the Copilot model
-and reasoning effort, the CLI path, launch at login, and whether the ribbon
-closes after an edit.
+**Settings** (from the menu bar) changes the global shortcut, whether selecting
+text opens the ribbon automatically, the Copilot model and reasoning effort,
+the CLI path, launch at login, and whether the ribbon closes after an edit.
 
 ## Privacy
 

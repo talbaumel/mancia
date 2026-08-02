@@ -64,17 +64,10 @@ struct RibbonView: View {
             }
         }
         .frame(width: width)
-        .background(RibbonPalette.lane)
+        .ribbonGlassBackground(in: shape)
         .clipShape(shape)
         .overlay(shape.strokeBorder(RibbonPalette.laneEdge, lineWidth: 1))
         .onExitCommand { model.onCancel?() }
-        // Without this, SwiftUI picks its own initial focus when the lane
-        // becomes key — the Action menu, in practice — and it does so *after*
-        // `focusDirection` has run, so the model's choice loses the race and
-        // the first thing typed goes nowhere.
-        .defaultFocus($focus, .direction)
-        .onAppear { focus = model.focusedCell }
-        .onChange(of: model.sessionSeq) { focusDirection() }
         .onChange(of: model.focusSeq) { focusDirection() }
         .onChange(of: model.focusedCell) { adopt(model.focusedCell) }
         .onChange(of: focus) { if let focus, isLive { model.focusedCell = focus } }
@@ -123,6 +116,7 @@ struct RibbonView: View {
     private var commandRow: some View {
         HStack(alignment: .top, spacing: 8) {
             Group {
+                oopsControl
                 targetCell
                 actionCell
                 directionCell
@@ -142,10 +136,32 @@ struct RibbonView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .frame(minHeight: rowHeight, alignment: .top)
-        .animation(.easeInOut(duration: 0.2), value: model.phase)
+        .animation(
+            model.showsRunningAnimation ? .easeInOut(duration: 0.2) : nil,
+            value: model.phase)
     }
 
     // MARK: - Cells
+
+    private var oopsControl: some View {
+        Button { model.runOops() } label: {
+            Label("Oops", systemImage: "keyboard")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(RibbonPalette.onOops)
+                .labelStyle(.titleAndIcon)
+                .frame(minWidth: 72, minHeight: controlHeight)
+        }
+        .buttonStyle(.plain)
+        .background(controlShape.fill(RibbonPalette.oops))
+        .contentShape(controlShape)
+        .focusable()
+        .focused($focus, equals: .oops)
+        .ribbonFocusRing(model.focusedCell == .oops, radius: 8, inset: 0)
+        .help("Switch English and Hebrew keyboard layout")
+        .accessibilityLabel("Oops")
+        .accessibilityHint("Corrects text typed with the wrong English or Hebrew keyboard layout")
+        .accessibilityIdentifier("Oops")
+    }
 
     /// What the edit will touch. A menu while there is a selection to choose
     /// between; a static chip when the whole document is the only option.
@@ -378,7 +394,7 @@ struct RibbonView: View {
         // and an image-backed button has no accessible name to override.
         .background(controlShape.fill(locked ? RibbonPalette.actionInert : RibbonPalette.action))
         .overlay {
-            if model.phase == .running {
+            if model.phase == .running, model.showsRunningAnimation {
                 // The head is light, not vermilion: the comet is riding the
                 // one control on the lane already filled with the tint, and a
                 // vermilion head there had nothing to be brighter than. The
@@ -483,12 +499,9 @@ struct RibbonView: View {
     /// The field's own prompt, drawn rather than handed to `TextField`.
     ///
     /// SwiftUI resolves a `prompt`'s colour from the system placeholder
-    /// register and ignores any foreground style put on the `Text`. The lane
-    /// keeps a fixed dark register whatever the system appearance is, so in
-    /// Light Mode that register resolved to near-black on the field's
-    /// near-black fill — the prompt was there and unreadable. Drawing it makes
-    /// the colour ours, and the 5.13:1 against `control` that `RibbonPalette`
-    /// documents true rather than aspirational.
+    /// register and ignores any foreground style put on the `Text`. Drawing it
+    /// keeps the placeholder in the ribbon's adaptive caption register and
+    /// readable over both versions of the glass control surface.
     @ViewBuilder
     private var placeholder: some View {
         if model.instruction.isEmpty {
@@ -638,8 +651,8 @@ extension RibbonView {
 
     // MARK: - Focus
 
-    /// Put focus back in Direction — on open, and whenever the lane retakes
-    /// key status.
+    /// Put focus back in Direction whenever the lane explicitly retakes key
+    /// status.
     fileprivate func focusDirection() {
         model.focusedCell = .direction
         adopt(.direction)
