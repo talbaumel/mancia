@@ -79,10 +79,16 @@ final class RibbonWindow {
 
     /// Dismiss the lane. Synthetic keystrokes are posted to the target app's
     /// pid, so the lane never needs to get out of their way.
-    func close() {
+    func close(immediately: Bool = false) {
         guard let panel, panel.isVisible else { return }
         stopObservingScreenChanges()
         stopObservingOutsideClicks()
+        if immediately {
+            presentationSeq &+= 1
+            panel.orderOut(nil)
+            panel.alphaValue = 1
+            return
+        }
         let token = presentationSeq
         let resting = panel.frame
         let reduced = reduceMotion

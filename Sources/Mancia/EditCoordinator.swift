@@ -203,6 +203,7 @@ final class EditCoordinator {
     }
 
     private func performOops() {
+        ribbon.close(immediately: true)
         if capturing {
             pendingAction = nil
             pendingNote = nil
@@ -221,11 +222,12 @@ final class EditCoordinator {
             model.runningTitle = "Fixing keyboard layout"
             model.phase = .running
             guard let resolved = await resolveInput() else {
-                ribbon.focus()
-                if !Task.isCancelled, model.phase == .running { fail("There is no text to edit.") }
+                if !Task.isCancelled, model.phase == .running {
+                    ribbon.show()
+                    fail("There is no text to edit.")
+                }
                 return
             }
-            ribbon.focus()
             if Task.isCancelled { return }
             guard let capture else { return }
             let output = KeyboardLayoutConverter.convert(resolved.text)
@@ -233,6 +235,7 @@ final class EditCoordinator {
                 isWholeDocument: resolved.strategy == .entireDocument,
                 userOptedIn: settings.confirmWholeDocumentReplace
             ) {
+                ribbon.show()
                 presentConfirmation(output: output, baseline: resolved.text)
                 return
             }
@@ -241,8 +244,10 @@ final class EditCoordinator {
                 model.phase = previousPhase
                 return
             }
-            dodgeAppliedText()
-            recordApplied(output: output, baseline: resolved.text)
+            currentTask = nil
+            model.phase = .idle
+            sessionActive = false
+            warmProviderAfterClose()
         }
     }
 
