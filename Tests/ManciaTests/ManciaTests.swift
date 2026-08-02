@@ -1975,8 +1975,8 @@ func placementWithoutPointerCentersOnTheHost() {
     #expect(beside.frame.width == resting.frame.width)
 }
 
-@Test("The lane opens horizontally near the captured pointer")
-func placementFollowsThePointerHorizontally() {
+@Test("The lane opens beside the captured pointer")
+func placementFollowsThePointer() {
     let pointer = CGPoint(x: 320, y: 500)
     let resolved = RibbonPlacement.resolve(
         height: 56,
@@ -1985,8 +1985,9 @@ func placementFollowsThePointerHorizontally() {
             selectionRect: selectionUnderTheMenuBar,
             pointerLocation: pointer))
 
+    #expect(resolved.anchor == .pointer)
     #expect(resolved.frame.minX == pointer.x + RibbonPlacement.pointerClearance)
-    #expect(resolved.frame.maxY == selectionUnderTheMenuBar.minY - RibbonPlacement.selectionClearance)
+    #expect(resolved.frame.midY == pointer.y)
 }
 
 @Test("Pointer-relative placement stays fully on screen")

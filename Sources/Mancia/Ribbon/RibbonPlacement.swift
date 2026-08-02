@@ -29,9 +29,9 @@ import CoreGraphics
 /// also why the room beside the selection is judged at `projectedHeight`
 /// rather than the height the lane opens at.
 ///
-/// Vertical position follows the selection. Horizontally, the lane opens near
-/// the pointer that invoked it and holds that position for the session; when
-/// no pointer on the target display is available, it centers on the host.
+/// When a pointer on the target display is available, the lane opens beside it
+/// and vertically centers on it. Otherwise it follows the selection vertically
+/// and centers on the host horizontally.
 ///
 /// One amendment after each apply: pasting can put words where the opening
 /// geometry never described them — a longer result flows past the old
@@ -127,6 +127,8 @@ enum RibbonPlacement {
         case belowSelection
         /// Floating just over it, when there was no room underneath.
         case aboveSelection
+        /// Floating beside the pointer that invoked it.
+        case pointer
 
         /// True where the lane slides up into place rather than down. Each
         /// anchor enters from the side it is pinned to, so a lane hanging from
@@ -206,9 +208,10 @@ enum RibbonPlacement {
         // Open just to the pointer's right, like a context surface, without
         // placing the first control under the cursor. A pointer on another
         // display is not a placement input.
-        let x = context.pointerLocation.flatMap { pointer in
-            context.screenFrame.contains(pointer) ? pointer.x + pointerClearance : nil
-        } ?? centeredX
+        let pointer = context.pointerLocation.flatMap { pointer in
+            context.screenFrame.contains(pointer) ? pointer : nil
+        }
+        let x = pointer.map { $0.x + pointerClearance } ?? centeredX
 
         // The band the lane is allowed to occupy.
         let ceiling = host.maxY - clearance
@@ -225,11 +228,13 @@ enum RibbonPlacement {
             case .screen, .hostWindow: ceiling - h
             case .belowSelection: (selection?.minY ?? ceiling) - h
             case .aboveSelection: selection?.maxY ?? floor
+            case .pointer: (pointer?.y ?? ceiling) - h / 2
             }
             return clamp(CGRect(x: x, y: y, width: width, height: h), to: context.screenFrame)
         }
 
         func choose() -> Anchor {
+            if pointer != nil { return .pointer }
             guard let selection else { return resting }
             // Judged at the lane's tallest ordinary state — see `projectedHeight`.
             let tall = max(height, projectedHeight)

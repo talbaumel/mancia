@@ -6,16 +6,15 @@
 > behavior. Notably:
 >
 > - **The floating panel is gone.** The edit session now runs in the
->   **command ribbon**: a lane that sits against the selected text — just
->   under it, or just over it when the selection is too near the foot of the
->   host — and falls back to one predictable place (flush under the menu bar,
->   or under the frontmost window's title bar when the menu bar is not
->   reserving a strip) when there is no selection to sit against. It takes the
->   host window's width, clamped to a readable maximum and centered, so it
->   never chases the caret sideways. Its cells are Target, Action, Direction
->   and Run, on one row. The bullets that follow describe the panel that
->   preceded it; the behavior they record carried over to the lane, the
->   placement and the ~360 pt command row did not.
+>   **command ribbon**: a lane that opens beside and vertically centered on
+>   the invocation pointer. Without a pointer on the target display, it sits
+>   against the selected text — just under it, or just over it when the
+>   selection is too near the foot of the host — and otherwise falls back to
+>   one predictable place (flush under the menu bar, or under the frontmost
+>   window's title bar when the menu bar is not reserving a strip). Its cells
+>   are Target, Action, Direction and Run, on one row. The bullets that follow
+>   describe the panel that preceded it; the behavior they record carried over
+>   to the lane, the placement and the ~360 pt command row did not.
 > - The panel was a single command row (~360 pt wide): a free-form
 >   instruction field whose trailing controls are a **preset dropdown**
 >   (`PanelPreset`) and an accent **run** button. Return and the run button take
@@ -113,13 +112,14 @@ Mancia/
    - Poll `NSPasteboard.general.changeCount` every 30 ms, up to 600 ms.
    - If changed → captured selection string. If not → no selection.
    - Restore the snapshot to the pasteboard afterward.
-3. **The ribbon opens against the selection**, resolved by
-   `RibbonPlacement`: just under the selected text, or just over it when the
-   selection sits too near the foot of the host to fit beneath. With no
-   selection rectangle to work from — a bare caret, a host that cannot report
-   bounds, or a selection with nowhere beside it — it falls back to one
-   predictable place: flush under the menu bar when the menu bar reserves a
-   strip, otherwise under the frontmost window's title bar. It is a
+3. **The ribbon opens beside the invocation pointer**, resolved by
+  `RibbonPlacement`, with its vertical midpoint matching the captured mouse
+  position. Without a pointer on the target display, it opens just under the
+  selected text, or just over it when the selection sits too near the foot of
+  the host to fit beneath. With neither usable pointer nor selection
+  rectangle, it falls back to one predictable place: flush under the menu bar
+  when the menu bar reserves a strip, otherwise under the frontmost window's
+  title bar. It is a
    `KeyablePanel` with `.nonactivatingPanel` style and floating level, so the
    target app keeps focus until the user interacts. Esc closes it.
 4. Ribbon UI (SwiftUI, a single lane whose width comes from placement and
