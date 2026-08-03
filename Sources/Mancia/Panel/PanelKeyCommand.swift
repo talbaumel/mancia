@@ -15,10 +15,9 @@ enum PanelKeyCommand: Equatable {
     case openSettings
     /// ⌘⏎ — run the primary action, same as Return.
     case submit
-    /// ⌘1…⌘4 — pin the nth preset in `PanelPreset.all`, as picking it from the
-    /// Action menu would. Carries the index rather than the preset so this
-    /// stays a pure mapping from keys, with the catalog resolved by the model.
-    case selectPreset(Int)
+    /// ⌘1…⌘9 — activate the nth visible ribbon button. Smart Edit interprets
+    /// the first four as its documented presets.
+    case activateNumber(Int)
     /// ⌘0 — unpin, handing the action back to the Direction field.
     ///
     /// The menu's `Your instruction` row does this with the mouse, but SwiftUI's
@@ -53,10 +52,15 @@ enum PanelKeyCommand: Equatable {
         case ("\r", [.command]): return .submit
         case ("t", [.command]): return .toggleTarget
         case ("0", [.command]): return .clearPreset
-        case ("1", [.command]): return .selectPreset(0)
-        case ("2", [.command]): return .selectPreset(1)
-        case ("3", [.command]): return .selectPreset(2)
-        case ("4", [.command]): return .selectPreset(3)
+        case ("1", [.command]): return .activateNumber(0)
+        case ("2", [.command]): return .activateNumber(1)
+        case ("3", [.command]): return .activateNumber(2)
+        case ("4", [.command]): return .activateNumber(3)
+        case ("5", [.command]): return .activateNumber(4)
+        case ("6", [.command]): return .activateNumber(5)
+        case ("7", [.command]): return .activateNumber(6)
+        case ("8", [.command]): return .activateNumber(7)
+        case ("9", [.command]): return .activateNumber(8)
         default: return nil
         }
     }

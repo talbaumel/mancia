@@ -130,9 +130,10 @@ one `EditCoordinator`, one `StatusBarController`, one `HotkeyManager`, and one
    a selection: with nothing selected the target is the whole document and
    there is no line to sit against.
 
-  Vertical position follows the selection. Horizontally, the lane opens near
-  the mouse position captured at invocation and stays there for the session;
-  it falls back to centering when the pointer is on another display. The lane's
+  The lane opens just below the mouse position captured at invocation, or just
+  above it when there is no room beneath, and stays there for the session. It
+  falls back to selection/resting placement and horizontal centering when the
+  pointer is on another display. The lane's
    **width is imposed by placement** (the host's width, clamped to a maximum
    and centered) and only its **height comes from content**, so the view is
    measured at the resolved width before the frame is set. `HostWindowProbe`
@@ -140,22 +141,18 @@ one `EditCoordinator`, one `StatusBarController`, one `HotkeyManager`, and one
    Accessibility; every failure path returns `nil` and placement degrades to
    the screen rather than failing the session.
 
-   The lane is a cyclical **edit session**. Target, Action, Direction and Run
+  The lane is a focused **edit session**. Target, Action, Direction and Run
    sit on a **single row**, dimmed and disabled while a request runs. Each
    control names itself — an icon and a value in a chip, a prompt inside the
    field — rather than carrying a caption above it, which is what lets the row
    be one line rather than two. Live status is a dot and one word **beside
-   Run**, and iteration history a counter beside that, both riding in width
-   the Direction field gives up by capping at a comfortable measure. Only a
+  Run**, riding in width the Direction field gives up by capping at a
+  comfortable measure. Only a
    failure still earns a **row of its own**, because it carries a message plus
-   Details, Copy and Retry. `PanelModel.phase` cycles
-   `.idle → .running → .confirm → .applied/.error` and back until the user
-   closes it. The lane **stays visible throughout**: all synthetic keystrokes
-   are posted directly to the target app's process (`CGEvent.postToPid`), so
-   they cannot be swallowed by the lane and no hide/reveal dance is needed.
-   After each keystroke burst (which activates the target app) the coordinator
-   calls `ribbon.focus()` to retake key status so Esc and typing reach the
-   lane again.
+  Details, Copy and Retry. Smart Edit follows `.idle → .running`, then closes
+  immediately when the provider returns and applies the result with no review,
+  applied state, or exit animation. Provider and validation failures move to
+  `.error` and keep the lane visible for recovery.
 
    Tab, ⇧Tab and the focus **ring both read `PanelModel.focusedCell`**, not the
    view's `@FocusState`. Tab arrives at the window rather than at a view, and
@@ -163,7 +160,8 @@ one `EditCoordinator`, one `StatusBarController`, one `HotkeyManager`, and one
    three `.focusable()` cells, so the model is the only place that knows which
    stop the keyboard is on.
 
-   ⌘1…⌘4 pin the nth entry of `PanelPreset.all` and ⌘T swaps the target, both
+  ⌘1…⌘9 activate visible compact/snippet buttons by position; in Smart Edit,
+  ⌘1…⌘4 pin the nth entry of `PanelPreset.all`. ⌘T swaps the target, both
    resolved by `PanelKeyCommand` and dispatched through `KeyablePanel`. Because
    that happens above the SwiftUI tree, the `disabled` that greys the cells out
    while a request runs is invisible to them — `PanelModel.isLocked` is what
@@ -197,32 +195,13 @@ one `EditCoordinator`, one `StatusBarController`, one `HotkeyManager`, and one
    Providers that conform to `WarmableLLMProvider` are warmed when the lane
    opens and after it closes; `CopilotCLIProvider` uses that hook to keep one
    empty, single-use ACP session ready for the next edit.
-5. **Confirm (whole-document only)** — before a `.document`-scope result
-   overwrites the document, the panel pauses in `PanelModel.phase == .confirm`
-   (`ApplyConfirmation.isRequired`, gated by
-   `AppSettings.confirmWholeDocumentReplace`, default on). The strip shows the
-   size change (`ApplyConfirmation.summary`) alongside **Replace** (⏎ /
-   `EditCoordinator.confirmApply()`), and **Cancel** discards the pending
-   result. Selection edits skip this — they are
-   low blast-radius and undoable — and apply straight away. This keeps an
-   injection-influenced or runaway result from silently replacing everything.
-6. **Apply & iterate** — when the result arrives (immediately for selections,
-   on confirm for documents),
-   `SelectionCapture.apply(text:to:entireDocument:)` pastes it (pasteboard →
-   activate target → `⌘V`, restoring the user's pasteboard ~1 s later) with
-   the lane still on screen. The coordinator records the iteration
-   (`versions`: index 0 is the session original, one entry per applied
-   result; running a new action from an earlier version truncates the
-   forward history) and the applied strip shows `←` / `→` navigation with a
-   "2/3"-style counter.
-   - Navigation (`EditCoordinator.navigate(to:)`) rewrites the document with
-     `versions[index]`: undo-then-paste for selections (including index 0),
-     `⌘A`+`⌘V` for document scope (robust against manual edits in between).
-   - **Cancel** (running strip) stops the in-flight `Task` but keeps the
-     session open; **Retry** (error strip) re-runs `perform(lastAction)`;
-   - Esc closes the session, keeping whichever version is showing. The applied
-     strip carries no close button: Esc is the one dismissal, and hybrid
-     post-apply behavior closes the lane on its own after a beat.
+5. **Close & apply** — when the provider returns, `EditCoordinator` orders the
+   ribbon out immediately, without an exit animation or an intermediate review
+   state. `SelectionCapture.apply(text:to:entireDocument:)` then pastes the
+   result (pasteboard → activate target → `⌘V`, restoring the user's pasteboard
+   ~1 s later); document scope uses `⌘A`+`⌘V`. The session ends after the paste.
+   **Cancel** in the running strip stops the in-flight task and keeps the lane
+   open; **Retry** in the error strip runs the last action again.
 
 Esc anywhere in the lane routes through `KeyablePanel.cancelOperation` →
 `model.onCancel` and closes the session in every phase.
@@ -334,15 +313,12 @@ instruction:
   `PromptGuardError`s. Both `EditCoordinator.perform` and `DebugCLI.complete`
   validate before building the prompt; failures surface through the lane's error
   state / stderr rather than sending a runaway request to the provider.
-- **Human-in-the-loop for whole-document overwrites (`ApplyConfirmation`).**
-  A `.document`-scope result never auto-pastes: the coordinator pauses in the
-  `.confirm` phase and the user must press **Replace document** (the size delta
-  is shown as a signal). This bounds the blast radius of an injection-influenced
-  or runaway result — the dangerous ⌘A+⌘V path — while leaving low-risk,
-  undoable selection edits immediate. Default on
-  (`AppSettings.confirmWholeDocumentReplace`), user-toggleable. The confirm/
-  keystroke wiring lives in `EditCoordinator`/`RibbonView` and is verified by
-  manual testing; the pure policy (`ApplyConfirmation`) is unit-tested.
+- **Whole-document Smart Edits apply directly.** Document scope uses the same
+  immediate completion contract as selection scope: provider success closes
+  the ribbon and posts `⌘A`+`⌘V` without a confirmation gate. Prompt isolation
+  and input validation reduce malformed requests, but they do not make model
+  output a security boundary; the user can undo an unwanted replacement in the
+  target app.
 
 Deliberately **not** done: a "jailbreak/abuse classifier" on the instruction
 field. Mancia is a single-user local utility — the operator already owns the

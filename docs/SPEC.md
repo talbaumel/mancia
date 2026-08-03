@@ -99,7 +99,7 @@ Mancia/
 ## Dependencies (SPM)
 
 - `sindresorhus/KeyboardShortcuts` (MIT) — configurable global hotkey with a
-  recorder control for the settings UI. Default shortcut: **⌃⌥⌘E**.
+  recorder control for the settings UI. Default shortcut: **⌥⌘A**.
   No other third-party dependencies.
 
 ## Core flow
@@ -113,8 +113,8 @@ Mancia/
    - If changed → captured selection string. If not → no selection.
    - Restore the snapshot to the pasteboard afterward.
 3. **The ribbon opens beside the invocation pointer**, resolved by
-  `RibbonPlacement`, with its vertical midpoint matching the captured mouse
-  position. Without a pointer on the target display, it opens just under the
+  `RibbonPlacement`, just below the captured mouse position or just above it
+  when there is no room beneath. Without a pointer on the target display, it opens just under the
   selected text, or just over it when the selection sits too near the foot of
   the host to fit beneath. With neither usable pointer nor selection
   rectangle, it falls back to one predictable place: flush under the menu bar
@@ -235,7 +235,7 @@ the coordinator, status menu, settings view, and debug CLI.
 ## Menu bar (`StatusBarController`)
 
 `NSStatusItem` with SF Symbol `hand.point.up.left.fill` (template image). Menu:
-- "Edit Selection…  ⌃⌥⌘E" (triggers same flow as hotkey, hotkey shown reflects current binding if easy, else static)
+- "Edit Selection…  ⌥⌘A" (triggers same flow as hotkey, hotkey shown reflects current binding if easy, else static)
 - "Provider: GitHub Copilot ✓/⚠︎" (disabled info row reflecting availability check)
 - Separator
 - "Accessibility permission…" — shown only when not granted; opens System Settings pane

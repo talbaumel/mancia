@@ -14,8 +14,8 @@ final class KeyablePanel: NSPanel {
     var onSubmit: (() -> Void)?
     /// ⌘T — swap the target between the selection and the whole document.
     var onToggleTarget: (() -> Void)?
-    /// ⌘1…⌘4 — pin the nth preset in the Action menu.
-    var onSelectPreset: ((Int) -> Void)?
+    /// ⌘1…⌘9 — activate the nth visible ribbon button.
+    var onActivateNumber: ((Int, TimeInterval) -> Void)?
     /// ⌘0 — unpin, handing the action back to the Direction field.
     var onClearPreset: (() -> Void)?
 
@@ -52,7 +52,7 @@ final class KeyablePanel: NSPanel {
         case .openSettings: onOpenSettings?()
         case .submit: onSubmit?()
         case .toggleTarget: onToggleTarget?()
-        case .selectPreset(let index): onSelectPreset?(index)
+        case .activateNumber(let index): onActivateNumber?(index, event.timestamp)
         case .clearPreset: onClearPreset?()
         }
         // Always consume a recognized shortcut, like a menu item would —

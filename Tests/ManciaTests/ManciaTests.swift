@@ -4,6 +4,61 @@ import AppKit
 import KeyboardShortcuts
 @testable import Mancia
 
+// MARK: - Pasteboard snapshot
+
+@Test("Pasteboard snapshots ignore private lazy representations")
+func pasteboardSnapshotChoosesAStandardType() {
+    let privateType = NSPasteboard.PasteboardType("com.example.lazy-private-data")
+
+    #expect(PasteboardSnapshot.preferredType(in: [privateType, .html, .string]) == .string)
+    #expect(PasteboardSnapshot.preferredType(in: [privateType, .png]) == .png)
+    #expect(PasteboardSnapshot.preferredType(in: [privateType]) == nil)
+}
+
+// MARK: - Snippets
+
+@Test("Snippet YAML preserves labels, values, and leading zeroes")
+func snippetYAMLParsesFlatMapping() throws {
+    let snippets = try SnippetStore.parse("""
+    # Personal values
+    My wife ID: "012345678"
+    'Door code': '0042'
+    Plain value: abc-123
+    """)
+
+    #expect(snippets == [
+        TextSnippet(title: "My wife ID", value: "012345678"),
+        TextSnippet(title: "Door code", value: "0042"),
+        TextSnippet(title: "Plain value", value: "abc-123"),
+    ])
+}
+
+@Test("Snippet store creates the mock YAML file on first load")
+func snippetStoreSeedsMissingFile() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let file = directory.appendingPathComponent("snippets.yaml")
+
+    let snippets = try SnippetStore.loadOrCreate(at: file)
+
+    #expect(FileManager.default.fileExists(atPath: file.path))
+    #expect(snippets.contains(TextSnippet(title: "My wife ID", value: "123456789")))
+}
+
+@MainActor
+@Test("Choosing a snippet forwards its exact value")
+func snippetSelectionForwardsExactValue() {
+    let model = PanelModel()
+    let snippet = TextSnippet(title: "Leading zero", value: "001234")
+    var received: TextSnippet?
+    model.onSnippet = { received = $0 }
+
+    model.runSnippet(snippet)
+
+    #expect(received == snippet)
+}
+
 // MARK: - Keyboard layout correction
 
 @Test("Oops converts English physical keys to Hebrew")
@@ -1094,10 +1149,12 @@ func panelKeyCommandsResolve() {
         (",", .command, .openSettings),
         ("\r", .command, .submit),
         ("t", .command, .toggleTarget),
-        ("1", .command, .selectPreset(0)),
-        ("2", .command, .selectPreset(1)),
-        ("3", .command, .selectPreset(2)),
-        ("4", .command, .selectPreset(3)),
+        ("1", .command, .activateNumber(0)),
+        ("2", .command, .activateNumber(1)),
+        ("3", .command, .activateNumber(2)),
+        ("4", .command, .activateNumber(3)),
+        ("5", .command, .activateNumber(4)),
+        ("9", .command, .activateNumber(8)),
         ("0", .command, .clearPreset),
     ]
     for c in cases {
@@ -1119,7 +1176,7 @@ func panelKeyCommandsRejectNonShortcuts() {
     #expect(PanelKeyCommand.resolve(characters: nil, modifiers: .command) == nil)
     #expect(PanelKeyCommand.resolve(characters: "\r", modifiers: []) == nil)
     #expect(PanelKeyCommand.resolve(characters: "1", modifiers: []) == nil)
-    #expect(PanelKeyCommand.resolve(characters: "5", modifiers: .command) == nil)
+    #expect(PanelKeyCommand.resolve(characters: "0", modifiers: [.command, .shift]) == nil)
 }
 
 @Test("Tab and shift-Tab resolve to focus moves")
@@ -1151,12 +1208,30 @@ func panelKeyCommandsResolvePrimaryReturn() {
 func ribbonFocusCycles() {
     let model = PanelModel()
     model.reset(hasSelection: true, charCount: 12)
+    model.snippets = [
+        TextSnippet(title: "My ID", value: "123"),
+        TextSnippet(title: "Office", value: "456"),
+    ]
     #expect(model.focusedCell == .smartEdit)
 
     model.moveFocus(.next)
     #expect(model.focusedCell == .oops)
     model.moveFocus(.next)
+    #expect(model.focusedCell == .snippets)
+    model.moveFocus(.next)
     #expect(model.focusedCell == .smartEdit)
+
+    model.showSnippets()
+    #expect(model.focusedCell == .snippet(0))
+    model.moveFocus(.next)
+    #expect(model.focusedCell == .snippet(1))
+    model.moveFocus(.next)
+    #expect(model.focusedCell == .snippet(0))
+
+    model.reset(hasSelection: true, charCount: 12)
+    model.snippets = []
+    model.showSnippets()
+    #expect(!model.snippetsExpanded)
 
     model.showSmartEdit()
     #expect(model.focusedCell == .direction)
@@ -1174,6 +1249,36 @@ func ribbonFocusCycles() {
     #expect(model.focusedCell == .action)
     model.moveFocus(.previous)
     #expect(model.focusedCell == .target)
+}
+
+@MainActor
+@Test("Command numbers activate the matching controls in each ribbon state")
+func ribbonNumberShortcutsFollowVisibleButtons() {
+    let model = PanelModel()
+    let snippets = [
+        TextSnippet(title: "First", value: "one"),
+        TextSnippet(title: "Second", value: "two"),
+    ]
+    model.snippets = snippets
+    var oopsRuns = 0
+    var pastedSnippet: TextSnippet?
+    model.onOops = { oopsRuns += 1 }
+    model.onSnippet = { pastedSnippet = $0 }
+
+    model.activateNumberedButton(at: 0)
+    #expect(oopsRuns == 1)
+    model.activateNumberedButton(at: 1)
+    #expect(model.snippetsExpanded)
+    model.activateNumberedButton(at: 1)
+    #expect(pastedSnippet == snippets[1])
+
+    model.reset(hasSelection: true, charCount: 12)
+    model.activateNumberedButton(at: 2)
+    #expect(model.smartEditExpanded)
+    model.activateNumberedButton(at: 1)
+    #expect(model.pinnedPreset == PanelPreset.all[1])
+    model.activateNumberedButton(at: 8)
+    #expect(model.pinnedPreset == PanelPreset.all[1])
 }
 
 @MainActor
@@ -1362,9 +1467,9 @@ func shortcutModifierSymbolOrder() {
 @Test("Display renders a shortcut with symbols and an uppercased key, no Bundle.module")
 @MainActor
 func shortcutDisplayFormatting() {
-    // The app default: ⌃⌥⌘E.
-    let shortcut = KeyboardShortcuts.Shortcut(.e, modifiers: [.control, .option, .command])
-    #expect(ShortcutRecorderView.display(shortcut) == "⌃⌥⌘E")
+    // The app default: ⌥⌘A.
+    let shortcut = KeyboardShortcuts.Shortcut(.a, modifiers: [.option, .command])
+    #expect(ShortcutRecorderView.display(shortcut) == "⌥⌘A")
     #expect(ShortcutRecorderView.display(nil) == nil)
 }
 
@@ -1622,6 +1727,19 @@ func placementUsesPreferredWidth() {
             preferredWidth: RibbonPlacement.compactWidth))
 
     #expect(resolved.frame.width == RibbonPlacement.compactWidth)
+}
+
+@Test("Expanded snippets width follows visible keys")
+func snippetsWidthIncludesVisibleButtons() {
+    let one = RibbonPlacement.snippetsWidth(titles: ["My ID"])
+    let populated = RibbonPlacement.snippetsWidth(titles: ["My ID", "Office code"])
+
+    #expect(populated > one)
+    #expect(RibbonPlacement.compactSnippetWidth(for: "ID")
+        == RibbonPlacement.compactSnippetMinWidth)
+    #expect(RibbonPlacement.compactSnippetWidth(for: String(repeating: "x", count: 100))
+        == RibbonPlacement.compactSnippetMaxWidth)
+    #expect(RibbonPlacement.compactSnippetWidth(for: "My ID") > 70)
 }
 
 @Test("A reserved menu-bar strip anchors the lane flush under the menu bar")
@@ -1997,8 +2115,8 @@ func placementWithoutPointerCentersOnTheHost() {
     #expect(beside.frame.width == resting.frame.width)
 }
 
-@Test("The lane opens horizontally near the captured pointer")
-func placementFollowsThePointerHorizontally() {
+@Test("The lane opens below and centers on the captured pointer")
+func placementFollowsThePointer() {
     let pointer = CGPoint(x: 320, y: 500)
     let resolved = RibbonPlacement.resolve(
         height: 56,
@@ -2007,8 +2125,9 @@ func placementFollowsThePointerHorizontally() {
             selectionRect: selectionUnderTheMenuBar,
             pointerLocation: pointer))
 
-    #expect(resolved.frame.minX == pointer.x + RibbonPlacement.pointerClearance)
-    #expect(resolved.frame.maxY == selectionUnderTheMenuBar.minY - RibbonPlacement.selectionClearance)
+    #expect(resolved.frame.midX == pointer.x)
+    #expect(resolved.anchor == .belowPointer)
+    #expect(resolved.frame.maxY == pointer.y - RibbonPlacement.pointerClearance)
 }
 
 @Test("Pointer-relative placement stays fully on screen")
@@ -2020,6 +2139,20 @@ func placementNearThePointerClampsAtScreenEdges() {
             pointerLocation: CGPoint(x: ribbonScreen.maxX - 5, y: 500)))
 
     #expect(resolved.frame.maxX == ribbonScreen.maxX)
+    #expect(resolved.frame.maxY == 500 - RibbonPlacement.pointerClearance)
+}
+
+@Test("The lane opens above a pointer near the bottom of the screen")
+func placementOpensAboveLowPointer() {
+    let pointer = CGPoint(x: 320, y: ribbonVisible.minY + 20)
+    let resolved = RibbonPlacement.resolve(
+        height: 56,
+        in: .init(
+            screenFrame: ribbonScreen, visibleFrame: ribbonVisible,
+            pointerLocation: pointer))
+
+    #expect(resolved.anchor == .abovePointer)
+    #expect(resolved.frame.minY == pointer.y + RibbonPlacement.pointerClearance)
 }
 
 @Test("A pointer on another display does not pull the lane sideways")

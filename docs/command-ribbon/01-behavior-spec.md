@@ -8,6 +8,11 @@
 > Everything else here — the cells, the states, the keyboard model and the
 > copy — still holds.
 
+> **Completion behavior changed:** Smart Edit now closes immediately when the
+> provider returns and applies the response directly. Its `.confirm`,
+> `.applied`, review, iteration, and post-apply animation sections below are
+> retained only as historical design context.
+
 ## The shape
 
 The ribbon is a horizontal lane that opens at the top of the screen and reads
@@ -24,7 +29,7 @@ Four cells. Each has a small caption above a value, except Run, which is the
 single accent control. The lane never covers the selected text
 (see [02-placement.md](02-placement.md)).
 
-Invocation is unchanged: ⌃⌥⌘E (`KeyboardShortcuts.Name.editSelection`) or the
+Invocation uses ⌥⌘A (`KeyboardShortcuts.Name.editSelection`) or the
 menu-bar item. `EditCoordinator.start()` is the entry point and its behavior —
 show instantly, capture the selection in the background, queue an action fired
 during the capture window — is unchanged.
@@ -198,11 +203,11 @@ The ribbon is the keyboard-first direction; this table is its contract.
 
 | Key | Effect | Where implemented |
 |---|---|---|
-| ⌃⌥⌘E | Open / refocus | Existing `HotkeyManager` |
+| ⌥⌘A | Open / refocus | Existing `HotkeyManager` |
 | Return | `runPrimary()`, or confirm in `.confirm` | Existing |
 | Esc | Close session, host untouched | Existing `onCancel` |
 | Tab / ⇧Tab | Move Target → Action → Direction → Run | New, stage 7 |
-| ⌘1…⌘4 | Pin the nth preset | New `PanelKeyCommand` case |
+| ⌘1…⌘9 | Activate the nth visible button; in Smart Edit, ⌘1…⌘4 pin the nth preset | `PanelKeyCommand.activateNumber` |
 | ⌘T | Switch the target | New `PanelKeyCommand` case |
 | ← / → | Version navigation in `.applied` with empty Direction | Existing `handleKeyDown` |
 | ⌘, | Settings | Existing |

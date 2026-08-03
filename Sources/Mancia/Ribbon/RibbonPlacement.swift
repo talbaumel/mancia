@@ -1,4 +1,4 @@
-import CoreGraphics
+import AppKit
 
 /// Where the command ribbon sits, resolved from screen and host-window
 /// geometry. Pure and free of AppKit lookups so every branch is unit-testable;
@@ -7,12 +7,10 @@ import CoreGraphics
 ///
 /// The rule the ribbon rests on:
 ///
-/// > When the host reports where the selected text is, sit just under it —
-/// > just over it if the selection is too near the foot of the host to fit
-/// > beneath. Otherwise — a bare caret, or a host that cannot answer — take
-/// > the predictable place: flush below the menu bar when the screen reserves
-/// > a strip for it, or inset below the frontmost window's title bar when it
-/// > does not.
+/// > Open just below the invocation pointer — or just above it when there is
+/// > no room beneath. Without a pointer on the target display, sit just under
+/// > the selection, or just over it near the foot of the host. With neither,
+/// > take the predictable place below the menu bar or title bar.
 ///
 /// The lane used to take the predictable place always, and drop to the *foot
 /// of the host* when it would otherwise cover the selection. That cleared the
@@ -29,9 +27,9 @@ import CoreGraphics
 /// also why the room beside the selection is judged at `projectedHeight`
 /// rather than the height the lane opens at.
 ///
-/// Vertical position follows the selection. Horizontally, the lane opens near
-/// the pointer that invoked it and holds that position for the session; when
-/// no pointer on the target display is available, it centers on the host.
+/// Both axes follow the pointer that invoked the lane and hold for the session.
+/// When no pointer on the target display is available, selection/resting
+/// placement takes over and centers horizontally on the host.
 ///
 /// One amendment after each apply: pasting can put words where the opening
 /// geometry never described them — a longer result flows past the old
@@ -132,12 +130,16 @@ enum RibbonPlacement {
         case belowSelection
         /// Floating just over it, when there was no room underneath.
         case aboveSelection
+        /// Floating just below the invocation pointer.
+        case belowPointer
+        /// Floating just above the invocation pointer when there is no room below.
+        case abovePointer
 
         /// True where the lane slides up into place rather than down. Each
         /// anchor enters from the side it is pinned to, so a lane hanging from
         /// the menu bar genuinely emerges from behind it, and one sitting on
         /// top of the selection rises into place over it.
-        var entersFromBelow: Bool { self == .aboveSelection }
+        var entersFromBelow: Bool { self == .aboveSelection || self == .abovePointer }
     }
 
     struct Resolution: Equatable {
@@ -160,8 +162,24 @@ enum RibbonPlacement {
     /// Fixed compact geometry. The controls and window use the same values so
     /// SwiftUI has neither spare width to leave blank nor pressure to wrap.
     static let compactOopsWidth: CGFloat = 72
+    static let compactSnippetsWidth: CGFloat = 108
     static let compactSmartEditWidth: CGFloat = 114
-    static let compactWidth: CGFloat = compactOopsWidth + 8 + compactSmartEditWidth + 24
+    static let compactSnippetMinWidth: CGFloat = 56
+    static let compactSnippetMaxWidth: CGFloat = 280
+
+    static func compactSnippetWidth(for title: String) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        let textWidth = ceil((title as NSString).size(withAttributes: [.font: font]).width)
+        return min(compactSnippetMaxWidth, max(compactSnippetMinWidth, textWidth + 40))
+    }
+
+    static let compactWidth: CGFloat =
+        compactOopsWidth + 8 + compactSnippetsWidth + 8 + compactSmartEditWidth + 24
+
+    static func snippetsWidth(titles: [String]) -> CGFloat {
+        let controlWidths = titles.map(compactSnippetWidth)
+        return controlWidths.reduce(0, +) + CGFloat(max(0, controlWidths.count - 1) * 8) + 24
+    }
 
     /// …and never let it get wider than this. On a 5K or ultrawide display a
     /// full-width lane is thousands of points of mostly empty ink with `Run` a
@@ -178,8 +196,6 @@ enum RibbonPlacement {
     /// Breathing room left between the lane's edge and the selection it sits
     /// against, so the two never touch.
     static let selectionClearance: CGFloat = 8
-
-    /// Horizontal gap between the invocation pointer and the lane.
     static let pointerClearance: CGFloat = 12
 
     /// The height every fit decision is taken against, whatever the lane
@@ -215,11 +231,11 @@ enum RibbonPlacement {
         let width = context.preferredWidth
             ?? max(minimumWidth, min(host.width, maximumWidth))
         let centeredX = host.minX + (host.width - width) / 2
-        // Open just to the pointer's right, like a context surface, without
-        // placing the first control under the cursor. A pointer on another
-        // display is not a placement input.
+        // Center on the invocation pointer so widening the lane keeps the
+        // interaction point visually anchored. A pointer on another display
+        // is not a placement input.
         let x = context.pointerLocation.flatMap { pointer in
-            context.screenFrame.contains(pointer) ? pointer.x + pointerClearance : nil
+            context.screenFrame.contains(pointer) ? pointer.x - width / 2 : nil
         } ?? centeredX
 
         // The band the lane is allowed to occupy.
@@ -237,11 +253,25 @@ enum RibbonPlacement {
             case .screen, .hostWindow: ceiling - h
             case .belowSelection: (selection?.minY ?? ceiling) - h
             case .aboveSelection: selection?.maxY ?? floor
+            case .belowPointer: (context.pointerLocation?.y ?? ceiling) - pointerClearance - h
+            case .abovePointer: (context.pointerLocation?.y ?? floor) + pointerClearance
             }
             return clamp(CGRect(x: x, y: y, width: width, height: h), to: context.screenFrame)
         }
 
         func choose() -> Anchor {
+            if let pointer = context.pointerLocation,
+               context.screenFrame.contains(pointer) {
+                let tall = max(height, projectedHeight)
+                if pointer.y - pointerClearance - tall >= floor {
+                    return .belowPointer
+                }
+                if pointer.y + pointerClearance + tall <= ceiling {
+                    return .abovePointer
+                }
+                return pointer.y >= (floor + ceiling) / 2
+                    ? .belowPointer : .abovePointer
+            }
             guard let selection else { return resting }
             // Judged at the lane's tallest ordinary state — see `projectedHeight`.
             let tall = max(height, projectedHeight)

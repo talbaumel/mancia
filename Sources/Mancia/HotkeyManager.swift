@@ -2,11 +2,11 @@ import AppKit
 import KeyboardShortcuts
 
 extension KeyboardShortcuts.Name {
-    /// Global "Edit Selection" hotkey, default ⌃⌥⌘E.
+    /// Global "Edit Selection" hotkey, default ⌥⌘A.
     @MainActor
     static let editSelection = Self(
         "editSelection",
-        default: .init(.e, modifiers: [.control, .option, .command])
+        default: .init(.a, modifiers: [.option, .command])
     )
 }
 

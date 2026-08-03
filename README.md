@@ -18,19 +18,22 @@
 
 Select text anywhere on your Mac and Mancia opens a compact ribbon beside it.
 Fix text typed with the wrong English or Hebrew keyboard layout locally with
-**Oops**, or open **Smart Edit** and say what you want changed. Smart Edit runs
-through GitHub Copilot CLI and replaces the text in place — no chat window, no
-copy-paste round trip.
+**Oops**, open **Snippets** to paste a saved local value, or open **Smart Edit**
+and say what you want changed. Smart Edit runs through GitHub Copilot CLI and
+replaces the text in place — no chat window, no copy-paste round trip.
 
 - Works in any app with standard **Copy**, **Select All** and **Paste**.
 - Opens automatically when you finish selecting text, or on demand from the
   global shortcut or menu bar.
-- Starts as a small **Oops · Smart Edit** ribbon, then replaces those buttons
-  with the AI controls when you open Smart Edit.
-- Sits against the selected text and aligns horizontally near the pointer that
-  invoked it, instead of opening in a distant corner.
+- Starts as a small **Oops · Snippets · Smart Edit** ribbon. Snippets replaces
+  that row with one button per YAML key and resizes the ribbon to fit; Smart
+  Edit replaces it with the AI controls.
+- Opens just below the pointer that invoked it, or just above near the bottom
+  of the screen, instead of opening in a distant corner.
 - **Oops** switches text between English and Hebrew physical-key layouts
   without calling Copilot.
+- Each snippet key is a direct button that pastes its private value from a
+  local YAML file without calling Copilot.
 - Smart Edit offers one-tap **Improve**, three coding-agent presets, or any
   free-form instruction.
 - Step back and forth between versions until one is right.
@@ -80,17 +83,21 @@ signed, so macOS asks again after each rebuild.
 
 1. Select text in any app.
 2. The compact ribbon opens automatically. You can also press
-   <kbd>⌃</kbd><kbd>⌥</kbd><kbd>⌘</kbd><kbd>E</kbd> or choose **Edit
+  <kbd>⌥</kbd><kbd>⌘</kbd><kbd>A</kbd> or choose **Edit
    Selection…** from the menu bar.
 3. Choose what the text needs:
    - **Oops** immediately fixes text typed with the wrong English or Hebrew
      keyboard layout, replaces it in place, and closes the ribbon. This is a
      local conversion and does not use Copilot.
+   - **Snippets** replaces the ribbon with the keys from
+     `~/Documents/Mancia/snippets.yaml` and resizes it to fit. Pressing a key
+     pastes its value over the selection (or at the caret), restores your
+     clipboard, and closes the ribbon.
    - **Smart Edit** replaces the compact buttons with Target, Action,
-     Direction, and Run; Oops is no longer shown. Leave Direction empty for
-     **Improve**, choose **Sharpen**, **Plan first**, or **Tighten**, or type
-     your own instruction — *“make it decisive, one sentence”*, *“rewrite in a
-     friendlier tone”*, *“turn these notes into bullets”*.
+     Direction, and Run; Oops and Snippets are no longer shown. Leave Direction
+     empty for **Improve**, choose **Sharpen**, **Plan first**, or **Tighten**,
+     or type your own instruction — *“make it decisive, one sentence”*,
+     *“rewrite in a friendlier tone”*, *“turn these notes into bullets”*.
 4. Press <kbd>Return</kbd> or **Run**. The ribbon stays visible with progress
    and Cancel controls while Copilot works, then shows the applied result and
    version navigation.
@@ -113,13 +120,28 @@ The Smart Edit actions are deliberately different:
 - **Your instruction** runs exactly the direction you type. When a preset is
   selected, typed Direction text becomes additional guidance for that preset.
 
+### Snippets file
+
+Mancia creates `~/Documents/Mancia/snippets.yaml` with mock values the first
+time the ribbon opens. Replace them with your own flat `name: value` entries:
+
+```yaml
+# Values are pasted exactly as strings. Quotes preserve leading zeroes.
+My wife ID: "123456789"
+My ID: "987654321"
+Office code: "00246810"
+```
+
+The file is reloaded whenever a new ribbon session opens. Keep values quoted
+when they are numeric identifiers rather than quantities. Snippets stay local
+and are never included in a Copilot prompt.
+
 | Key | Does |
 | --- | --- |
 | <kbd>Return</kbd> | Activate the focused control; initially opens Smart Edit, then runs from Direction or Run |
 | <kbd>⌘</kbd><kbd>Return</kbd> | Run Smart Edit from anywhere in the expanded ribbon |
-| <kbd>←</kbd> / <kbd>→</kbd> | Step between versions |
 | <kbd>Tab</kbd> / <kbd>⇧</kbd><kbd>Tab</kbd> | Move forward or backward through the visible ribbon controls |
-| <kbd>⌘1</kbd>…<kbd>⌘4</kbd> | In Smart Edit, pick Improve, Sharpen, Plan first, or Tighten |
+| <kbd>⌘1</kbd>…<kbd>⌘9</kbd> | Activate the matching visible button from left to right; in Smart Edit, ⌘1…⌘4 pick Improve, Sharpen, Plan first, or Tighten |
 | <kbd>⌘0</kbd> | In Smart Edit, return to using your own instruction |
 | <kbd>⌘T</kbd> | In Smart Edit, switch target: selection ↔ whole document |
 | <kbd>⌘,</kbd> | Settings |
@@ -127,17 +149,17 @@ The Smart Edit actions are deliberately different:
 
 **Settings** (from the menu bar) shows shortcut, Accessibility, and Copilot
 readiness. It also changes the global shortcut, whether selecting text opens
-the ribbon automatically, whether whole-document replacement needs
-confirmation, whether the ribbon stays open after an edit, launch at login,
-and — under Advanced — the Copilot model, reasoning effort, and CLI path.
+the ribbon automatically, launch at login, and — under Advanced — the Copilot
+model, reasoning effort, and CLI path. Smart Edit closes immediately when a
+response is ready and applies it without a review or completion animation.
 
 ## Privacy
 
 Mancia has no analytics or telemetry and never calls an AI API directly.
-**Oops stays entirely local.** Smart Edit passes your selected text and
-instruction to the local `copilot` process, which may send them on to GitHub
-Copilot services. The pasteboard is used to read and replace text, then restored
-to what it held before.
+**Oops and Snippets stay entirely local.** Smart Edit passes your selected text
+and instruction to the local `copilot` process, which may send them on to
+GitHub Copilot services. The pasteboard is used to read and replace text, then
+restored to what it held before.
 
 Report a vulnerability through our [security policy](SECURITY.md).
 

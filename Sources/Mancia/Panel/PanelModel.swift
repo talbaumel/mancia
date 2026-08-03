@@ -4,7 +4,7 @@ import Observation
 /// Observable state shared between the panel view and the coordinator that
 /// drives it. The coordinator wires the closures; the view calls them.
 ///
-/// The panel is a cyclical edit session: Oops stays immediate, while Smart Edit
+/// The panel is a cyclical edit session: Oops and snippet keys stay immediate, while Smart Edit
 /// discloses the provider-backed controls for the rest of the session. Once
 /// disclosed, those controls stay visible (and disable while a request runs)
 /// as the status cycles until the user closes the session.
@@ -14,7 +14,9 @@ final class PanelModel {
     enum Phase: Equatable { case idle, running, confirm, applied, error }
     enum Scope: Equatable { case selection, document }
     /// The ribbon's focusable cells, listed in Tab order.
-    enum Cell: Hashable, CaseIterable { case oops, smartEdit, target, action, direction, run }
+    enum Cell: Hashable {
+        case oops, snippets, snippet(Int), smartEdit, target, action, direction, run
+    }
 
     var phase: Phase = .idle {
         didSet {
@@ -36,8 +38,12 @@ final class PanelModel {
     /// The status line reads "Reading selection…" until this clears.
     var capturing = false
     var instruction = ""
+    var snippets: [TextSnippet] = []
+    var snippetError: String?
+    /// Whether the compact entry row has given way to direct snippet keys.
+    var snippetsExpanded = false
     /// The provider-backed editing workflow is disclosed on demand so the
-    /// ribbon opens with only its immediate local action and one clear entry.
+    /// ribbon opens with its local actions and one clear AI entry.
     var smartEditExpanded = false
     /// A preset the user pinned from the Action cell, which then runs instead
     /// of the instruction-derived action. `nil` — the default — means the
@@ -87,6 +93,8 @@ final class PanelModel {
     var onPerform: ((EditAction, String?) -> Void)?
     /// Correct text typed with the English/Hebrew keyboard layout reversed.
     var onOops: (() -> Void)?
+    /// Paste a local value selected from the snippets file.
+    var onSnippet: ((TextSnippet) -> Void)?
     /// Navigate the document to versions[index].
     var onNavigate: ((Int) -> Void)?
     var onRetry: (() -> Void)?
@@ -104,6 +112,7 @@ final class PanelModel {
         scope = hasSelection ? .selection : .document
         capturing = false
         instruction = ""
+        snippetsExpanded = false
         smartEditExpanded = false
         pinnedPreset = nil
         runningTitle = ""
@@ -126,6 +135,32 @@ final class PanelModel {
         guard !isLocked, !smartEditExpanded else { return }
         smartEditExpanded = true
         returnFocusToDirection()
+    }
+
+    func showSnippets() {
+        guard !isLocked, !snippetsExpanded, !snippets.isEmpty else { return }
+        snippetsExpanded = true
+        focusedCell = .snippet(0)
+        focusSeq &+= 1
+    }
+
+    /// ⌘1…⌘9 activates the matching visible button. Smart Edit keeps its
+    /// documented preset mapping rather than treating Target as button one.
+    func activateNumberedButton(at index: Int) {
+        guard !isLocked else { return }
+        if smartEditExpanded {
+            selectPreset(at: index)
+        } else if snippetsExpanded {
+            guard snippets.indices.contains(index) else { return }
+            runSnippet(snippets[index])
+        } else {
+            switch index {
+            case 0: runOops()
+            case 1: showSnippets()
+            case 2: showSmartEdit()
+            default: break
+            }
+        }
     }
 
     /// ⌘T and the Target menu. Aiming at the selection is inert when there is
@@ -192,8 +227,11 @@ final class PanelModel {
     /// Target drops out of the ring while it is a static label — there is no
     /// selection to choose, so there is nothing there to operate.
     var focusableCells: [Cell] {
-        guard smartEditExpanded else { return [.oops, .smartEdit] }
-        let smartEditCells = Cell.allCases.filter { $0 != .oops && $0 != .smartEdit }
+        guard smartEditExpanded else {
+            if snippetsExpanded { return snippets.indices.map(Cell.snippet) }
+            return [.oops, .snippets, .smartEdit]
+        }
+        let smartEditCells: [Cell] = [.target, .action, .direction, .run]
         guard hasSelection, !capturing else {
             return smartEditCells.filter { $0 != .target }
         }
@@ -241,6 +279,11 @@ final class PanelModel {
     func runOops() {
         guard !isLocked else { return }
         onOops?()
+    }
+
+    func runSnippet(_ snippet: TextSnippet) {
+        guard !isLocked else { return }
+        onSnippet?(snippet)
     }
 
     /// Run a preset chosen from the field's dropdown. Anything typed in the

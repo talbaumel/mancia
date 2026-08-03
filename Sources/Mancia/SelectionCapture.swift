@@ -3,18 +3,74 @@ import ApplicationServices
 
 /// A snapshot of the general pasteboard, so we can restore the user's clipboard
 /// after borrowing it for copy/paste.
-struct PasteboardSnapshot {
-    private let items: [[NSPasteboard.PasteboardType: Data]]
+struct PasteboardSnapshot: Codable {
+    private struct StoredItem: Codable {
+        let type: String
+        let data: Data
+    }
 
-    static func capture() -> PasteboardSnapshot {
-        let pb = NSPasteboard.general
-        var stored: [[NSPasteboard.PasteboardType: Data]] = []
-        for item in pb.pasteboardItems ?? [] {
-            var dict: [NSPasteboard.PasteboardType: Data] = [:]
-            for type in item.types {
-                if let data = item.data(forType: type) { dict[type] = data }
-            }
-            if !dict.isEmpty { stored.append(dict) }
+    private let items: [StoredItem]
+
+    /// Request one interoperable representation per item. Apps frequently
+    /// advertise private lazy types whose provider may stop responding; asking
+    /// for every advertised type can then block AppKit's main thread forever.
+    static let restorableTypes: [NSPasteboard.PasteboardType] = [
+        .string, .rtf, .html, .png, .tiff, .fileURL,
+    ]
+
+    static func preferredType(in types: [NSPasteboard.PasteboardType])
+        -> NSPasteboard.PasteboardType?
+    {
+        restorableTypes.first(where: types.contains)
+    }
+
+    /// Materialize the clipboard outside the app process. Pasteboard values
+    /// can be promises owned by another app; a helper keeps an unresponsive
+    /// owner from trapping Mancia's main actor in synchronous AppKit IPC.
+    @MainActor
+    static func capture() async -> PasteboardSnapshot {
+        guard let executableURL = Bundle.main.executableURL else {
+            return PasteboardSnapshot(items: [])
+        }
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = executableURL
+        process.arguments = ["--pasteboard-export"]
+        process.standardOutput = output
+        process.standardError = Pipe()
+        do {
+            try process.run()
+        } catch {
+            return PasteboardSnapshot(items: [])
+        }
+
+        let deadline = ContinuousClock.now + .milliseconds(750)
+        while process.isRunning, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+        guard !process.isRunning else {
+            process.terminate()
+            return PasteboardSnapshot(items: [])
+        }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        guard process.terminationStatus == 0,
+              let snapshot = try? JSONDecoder().decode(PasteboardSnapshot.self, from: data)
+        else { return PasteboardSnapshot(items: []) }
+        return snapshot
+    }
+
+    @MainActor
+    static func exportCurrent() -> Data? {
+        try? JSONEncoder().encode(captureLocally())
+    }
+
+    @MainActor
+    private static func captureLocally() -> PasteboardSnapshot {
+        var stored: [StoredItem] = []
+        for item in NSPasteboard.general.pasteboardItems ?? [] {
+            guard let type = preferredType(in: item.types),
+                  let data = item.data(forType: type) else { continue }
+            stored.append(StoredItem(type: type.rawValue, data: data))
         }
         return PasteboardSnapshot(items: stored)
     }
@@ -22,9 +78,11 @@ struct PasteboardSnapshot {
     func restore() {
         let pb = NSPasteboard.general
         pb.clearContents()
-        let objects = items.map { dict -> NSPasteboardItem in
+        let objects = items.map { stored -> NSPasteboardItem in
             let item = NSPasteboardItem()
-            for (type, data) in dict { item.setData(data, forType: type) }
+            item.setData(
+                stored.data,
+                forType: NSPasteboard.PasteboardType(stored.type))
             return item
         }
         if !objects.isEmpty { pb.writeObjects(objects) }
@@ -56,7 +114,7 @@ enum SelectionCapture {
     /// Capture the current selection from the frontmost app via ⌘C.
     static func captureSelection() async -> SelectionCaptureResult {
         let targetApp = NSWorkspace.shared.frontmostApplication
-        let snapshot = PasteboardSnapshot.capture()
+        let snapshot = await PasteboardSnapshot.capture()
         defer { snapshot.restore() }
         let text = await copyCurrentSelection(pid: targetApp?.processIdentifier)
         return SelectionCaptureResult(text: text, targetApp: targetApp, snapshot: snapshot)
@@ -99,7 +157,7 @@ enum SelectionCapture {
         guard isTargetAlive(result) else { return nil }
         result.targetApp?.activate()
         try? await Task.sleep(for: .milliseconds(120))
-        let snapshot = PasteboardSnapshot.capture()
+        let snapshot = await PasteboardSnapshot.capture()
         defer { snapshot.restore() }
         return await copyCurrentSelection(pid: result.targetApp?.processIdentifier)
     }

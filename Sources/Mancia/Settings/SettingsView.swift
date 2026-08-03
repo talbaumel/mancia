@@ -56,12 +56,6 @@ struct SettingsView: View {
 
             Section("Editing") {
                 Toggle("Show ribbon when text is selected", isOn: $settings.showRibbonOnTextSelection)
-                Toggle("Confirm before replacing the whole document", isOn: $settings.confirmWholeDocumentReplace)
-                Picker("After applying:", selection: $settings.postApplyBehavior) {
-                    ForEach(PostApplyBehavior.allCases) { behavior in
-                        Text(behavior.label).tag(behavior)
-                    }
-                }
             }
 
             Section("General") {

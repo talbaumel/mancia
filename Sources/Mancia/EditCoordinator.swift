@@ -1,10 +1,9 @@
 import AppKit
 
-/// Orchestrates a cyclical edit session: capture selection → show the ribbon →
-/// run provider → apply inline → navigate between iterations or run further
-/// actions, until the user closes the session. Owns the ribbon and the
-/// in-flight task. The ribbon stays visible throughout — synthetic keystrokes
-/// are posted to the target app's pid, so they can't be swallowed by it.
+/// Orchestrates an edit session: capture selection → show the ribbon → run an
+/// action → apply inline. Provider-backed edits close as soon as a response is
+/// ready; local actions may have their own completion behavior. Owns the ribbon
+/// and the in-flight task.
 @MainActor
 final class EditCoordinator {
     private let provider: LLMProvider
@@ -31,6 +30,7 @@ final class EditCoordinator {
     private var pendingAction: EditAction?
     private var pendingNote: String?
     private var pendingOops = false
+    private var pendingSnippet: TextSnippet?
     /// The post-apply auto-close beat (hybrid behavior). Cancelled on any panel
     /// key press so the user can keep iterating.
     private var autoCloseTask: Task<Void, Never>?
@@ -61,6 +61,7 @@ final class EditCoordinator {
     private func wire() {
         model.onPerform = { [weak self] action, note in self?.perform(action, note: note) }
         model.onOops = { [weak self] in self?.performOops() }
+        model.onSnippet = { [weak self] snippet in self?.performSnippet(snippet) }
         model.onNavigate = { [weak self] in self?.navigate(to: $0) }
         model.onRetry = { [weak self] in self?.retry() }
         model.onConfirmApply = { [weak self] in self?.confirmApply() }
@@ -85,6 +86,7 @@ final class EditCoordinator {
         pendingAction = nil
         pendingNote = nil
         pendingOops = false
+        pendingSnippet = nil
         pendingApply = nil
         capture = nil
         versions = []
@@ -94,6 +96,7 @@ final class EditCoordinator {
         // Optimistically assume a selection until capture proves otherwise;
         // the status line reads "Reading selection…" until it resolves.
         model.reset(hasSelection: true, charCount: 0)
+        reloadSnippets()
         model.capturing = true
         ribbon.show()
         warmProvider()
@@ -107,7 +110,10 @@ final class EditCoordinator {
             model.hasSelection = hasSelection
             model.selectionCharCount = result.text?.count ?? 0
             model.scope = hasSelection ? .selection : .document
-            if pendingOops {
+            if let snippet = pendingSnippet {
+                pendingSnippet = nil
+                performSnippet(snippet)
+            } else if pendingOops {
                 pendingOops = false
                 performOops()
             } else if let pending = pendingAction {
@@ -137,6 +143,7 @@ final class EditCoordinator {
         // spinner; it runs the moment the selection is ready.
         if capturing {
             pendingOops = false
+            pendingSnippet = nil
             lastAction = action
             lastNote = note
             pendingAction = action
@@ -176,22 +183,16 @@ final class EditCoordinator {
                 let output = try await provider.complete(prompt)
                 if Task.isCancelled { return }
                 guard let capture else { return }
-                // Gate a whole-document overwrite behind explicit confirmation:
-                // an injection-influenced or runaway result there would silently
-                // replace the entire document. Selection edits apply immediately.
-                if ApplyConfirmation.isRequired(
-                    isWholeDocument: resolved.strategy == .entireDocument,
-                    userOptedIn: settings.confirmWholeDocumentReplace
-                ) {
-                    presentConfirmation(output: output, baseline: resolved.text)
-                    return
-                }
-                // Apply immediately. Keystrokes are posted to the target
-                // app's pid, so the panel stays visible throughout.
+                // A completed Smart Edit is the end of the interaction. Hide
+                // before posting paste keystrokes, with no review, applied
+                // state, reposition, or exit animation.
+                ribbon.close(immediately: true)
                 await applyResolved(output: output, strategy: resolved.strategy, capture: capture)
                 if Task.isCancelled { return }
-                dodgeAppliedText()
-                recordApplied(output: output, baseline: resolved.text)
+                currentTask = nil
+                model.phase = .idle
+                sessionActive = false
+                warmProviderAfterClose()
             } catch is CancellationError {
                 if model.phase == .running { model.phase = previousPhase }
                 return
@@ -207,6 +208,7 @@ final class EditCoordinator {
         if capturing {
             pendingAction = nil
             pendingNote = nil
+            pendingSnippet = nil
             pendingOops = true
             model.showsRunningAnimation = false
             model.runningTitle = "Fixing keyboard layout"
@@ -248,6 +250,50 @@ final class EditCoordinator {
             model.phase = .idle
             sessionActive = false
             warmProviderAfterClose()
+        }
+    }
+
+    private func performSnippet(_ snippet: TextSnippet) {
+        ribbon.close(immediately: true)
+        if capturing {
+            pendingAction = nil
+            pendingNote = nil
+            pendingOops = false
+            pendingSnippet = snippet
+            model.showsRunningAnimation = false
+            model.runningTitle = "Pasting snippet"
+            model.phase = .running
+            return
+        }
+
+        currentTask?.cancel()
+        autoCloseTask?.cancel()
+        autoCloseTask = nil
+        currentTask = Task {
+            guard let capture else {
+                ribbon.show()
+                fail("There is nowhere to paste the snippet.")
+                return
+            }
+            await SelectionCapture.apply(
+                text: snippet.value,
+                to: capture,
+                entireDocument: false)
+            if Task.isCancelled { return }
+            currentTask = nil
+            model.phase = .idle
+            sessionActive = false
+            warmProviderAfterClose()
+        }
+    }
+
+    private func reloadSnippets() {
+        do {
+            model.snippets = try SnippetStore.loadOrCreate()
+            model.snippetError = nil
+        } catch {
+            model.snippets = []
+            model.snippetError = error.localizedDescription
         }
     }
 
@@ -498,6 +544,7 @@ final class EditCoordinator {
             pendingAction = nil
             pendingNote = nil
             pendingOops = false
+            pendingSnippet = nil
             model.phase = .idle
             ribbon.focus()
             return

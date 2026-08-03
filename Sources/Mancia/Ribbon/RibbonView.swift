@@ -79,6 +79,8 @@ struct RibbonView: View {
         .onChange(of: model.previewExpanded) { relayout() }
         .onChange(of: model.errorDetailsExpanded) { relayout() }
         .onChange(of: model.errorText) { relayout() }
+        .onChange(of: model.snippets) { relayout() }
+        .onChange(of: model.snippetsExpanded) { relayout() }
         .onChange(of: model.smartEditExpanded) { relayout() }
     }
 
@@ -86,15 +88,16 @@ struct RibbonView: View {
     /// corners; one floating over the host or against the selection rounds all
     /// four.
     private var shape: UnevenRoundedRectangle {
+        let radius: CGFloat = 20
         switch anchor {
         case .screen:
-            UnevenRoundedRectangle(
-                topLeadingRadius: 0, bottomLeadingRadius: 12,
-                bottomTrailingRadius: 12, topTrailingRadius: 0, style: .continuous)
-        case .hostWindow, .belowSelection, .aboveSelection:
-            UnevenRoundedRectangle(
-                topLeadingRadius: 12, bottomLeadingRadius: 12,
-                bottomTrailingRadius: 12, topTrailingRadius: 12, style: .continuous)
+            return UnevenRoundedRectangle(
+                topLeadingRadius: 0, bottomLeadingRadius: radius,
+                bottomTrailingRadius: radius, topTrailingRadius: 0, style: .continuous)
+        case .hostWindow, .belowSelection, .aboveSelection, .belowPointer, .abovePointer:
+            return UnevenRoundedRectangle(
+                topLeadingRadius: radius, bottomLeadingRadius: radius,
+                bottomTrailingRadius: radius, topTrailingRadius: radius, style: .continuous)
         }
     }
 
@@ -104,9 +107,9 @@ struct RibbonView: View {
 
     // MARK: - Command row
 
-    /// Oops and Smart Edit at rest. Once disclosed, those entry controls give
-    /// way to **Target · Action · Direction**, then iteration history, live
-    /// status, and Run.
+    /// Oops, Snippets, and Smart Edit at rest. Snippets gives way to its direct
+    /// key buttons; Smart Edit gives way to **Target · Action · Direction**, then iteration
+    /// history, live status, and Run.
     ///
     /// Each cell used to carry a caption above its value. They were the widest
     /// thing on the lane and said the least: "Selection · 22", "Improve" and a
@@ -121,8 +124,11 @@ struct RibbonView: View {
                     targetCell
                     actionCell
                     directionCell
+                } else if model.snippetsExpanded {
+                    snippetControls
                 } else {
                     oopsControl
+                    snippetsControl
                     smartEditControl
                 }
             }
@@ -152,14 +158,14 @@ struct RibbonView: View {
         Button { model.runOops() } label: {
             Label("Oops", systemImage: "keyboard")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(RibbonPalette.onOops)
+                .foregroundStyle(RibbonPalette.text)
                 .labelStyle(.titleAndIcon)
                 .frame(
                     width: RibbonPlacement.compactOopsWidth,
                     height: controlHeight)
         }
         .buttonStyle(.plain)
-        .background(controlShape.fill(RibbonPalette.oops))
+        .background(controlShape.fill(RibbonPalette.control))
         .contentShape(controlShape)
         .focusable()
         .focused($focus, equals: .oops)
@@ -174,7 +180,7 @@ struct RibbonView: View {
         Button { model.showSmartEdit() } label: {
             Label("Smart Edit", systemImage: "sparkles")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(RibbonPalette.onAction)
+                .foregroundStyle(RibbonPalette.text)
                 .labelStyle(.titleAndIcon)
                 .lineLimit(1)
                 .padding(.horizontal, 12)
@@ -183,7 +189,7 @@ struct RibbonView: View {
                     height: controlHeight)
         }
         .buttonStyle(.plain)
-        .background(controlShape.fill(RibbonPalette.action))
+        .background(controlShape.fill(RibbonPalette.control))
         .contentShape(controlShape)
         .focusable()
         .focused($focus, equals: .smartEdit)
@@ -192,6 +198,57 @@ struct RibbonView: View {
         .accessibilityLabel("Smart Edit")
         .accessibilityHint("Shows target, action, direction, and run controls")
         .accessibilityIdentifier("SmartEdit")
+    }
+
+    private var snippetsControl: some View {
+        Button { model.showSnippets() } label: {
+            Label("Snippets", systemImage: "doc.on.clipboard")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(RibbonPalette.text)
+                .labelStyle(.titleAndIcon)
+                .lineLimit(1)
+                .frame(
+                    width: RibbonPlacement.compactSnippetsWidth,
+                    height: controlHeight)
+        }
+        .buttonStyle(.plain)
+        .background(controlShape.fill(RibbonPalette.control))
+        .contentShape(controlShape)
+        .focusable()
+        .focused($focus, equals: .snippets)
+        .ribbonFocusRing(model.focusedCell == .snippets, radius: 8, inset: 0)
+        .help("Show local snippet keys")
+        .accessibilityLabel("Snippets")
+        .accessibilityHint("Replaces the ribbon with local snippet buttons")
+        .accessibilityIdentifier("Snippets")
+    }
+
+    @ViewBuilder
+    private var snippetControls: some View {
+        ForEach(Array(model.snippets.enumerated()), id: \.element.id) { index, snippet in
+            Button { model.runSnippet(snippet) } label: {
+                Text(snippet.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(RibbonPalette.text)
+                    .padding(.horizontal, 12)
+                    .frame(
+                        width: RibbonPlacement.compactSnippetWidth(for: snippet.title),
+                        height: controlHeight)
+                    .contentShape(controlShape)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .buttonStyle(.plain)
+            .background(controlShape.fill(RibbonPalette.control))
+            .contentShape(controlShape)
+            .focusable()
+            .focused($focus, equals: .snippet(index))
+            .ribbonFocusRing(model.focusedCell == .snippet(index), radius: 8, inset: 0)
+            .help("Paste \(snippet.title)")
+            .accessibilityLabel(snippet.title)
+            .accessibilityHint("Pastes this local value into the current app")
+            .accessibilityIdentifier("Snippet-\(index)")
+        }
     }
 
     /// What the edit will touch. A menu while there is a selection to choose
@@ -412,12 +469,13 @@ struct RibbonView: View {
     /// the lane's one accent control became the least readable thing on it.
     private var runControl: some View {
         Button { model.runPrimary() } label: {
-            // Hidden, not absent: the button still takes its size from the
-            // real label, so the two cannot drift apart. What is drawn is the
+            // Transparent, not hidden: the button still takes its size and
+            // mouse hit region from the real label. What is drawn is the
             // overlay below.
             runLabel
-                .hidden()
+                .opacity(0)
                 .frame(minWidth: 72, minHeight: controlHeight)
+                .contentShape(controlShape)
         }
         .buttonStyle(.plain)
         // The fill and the running border hang off the button rather than off

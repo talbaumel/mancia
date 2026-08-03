@@ -130,10 +130,14 @@ this is the one place in the app where it is not costume.
 
 Driven by `RibbonPlacement.Anchor`:
 
+The shell uses untinted native regular Liquid Glass on macOS 26 and neutral
+ultra-thin material on older systems, matching the system volume HUD rather
+than imposing an app-colored tint on the glass.
+
 | Anchor | Corners | Shadow |
 |---|---|---|
-| `.screen` | top 0, bottom 12 — the lane hangs from the screen edge | `y: 8, blur: 20, black 28%` |
-| `.hostWindow` | all 12 — the lane floats over the host | `y: 10, blur: 26, black 34%` |
+| `.screen` | top 0, bottom 20 — the lane hangs from the screen edge | `y: 8, blur: 20, black 28%` |
+| All floating anchors | all 20 — the lane floats over the host or beside the selection/pointer | `y: 10, blur: 26, black 34%` |
 
 Both shadows carry a real vertical offset; a zero-offset halo is decoration.
 

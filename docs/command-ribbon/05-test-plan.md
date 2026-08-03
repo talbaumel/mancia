@@ -137,7 +137,7 @@ The point of these is that the ribbon changed presentation only.
 
 | # | Scenario | Expect |
 |---|---|---|
-| E1 ▲ | Select a sentence in TextEdit, ⌃⌥⌘E, Return | Sentence improved in place |
+| E1 ▲ | Select a sentence in TextEdit, ⌥⌘A, Return | Sentence improved in place |
 | E2 ▲ | Same in a browser textarea (non-Cocoa host) | Works; this is the harshest host |
 | E3 | Type an instruction, Return | Runs the instruction, not Improve |
 | E4 | Pin Improve from the Action menu, type guidance, Run | Improve template with guidance |

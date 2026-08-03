@@ -6,6 +6,10 @@ enum DebugCLI {
     /// Handle a recognized debug flag. Returns true if it took over the process
     /// (and will `exit`); false to continue to normal app startup.
     static func handle(_ arguments: [String]) -> Bool {
+        if arguments.contains("--pasteboard-export") {
+            run { pasteboardExport() }
+            return true
+        }
         if arguments.contains("--provider-check") {
             run { await providerCheck() }
             return true
@@ -20,6 +24,14 @@ enum DebugCLI {
             return true
         }
         return false
+    }
+
+    @MainActor
+    private static func pasteboardExport() {
+        if let data = PasteboardSnapshot.exportCurrent() {
+            FileHandle.standardOutput.write(data)
+        }
+        exit(0)
     }
 
     /// Run an async body on the main actor, then service the main queue so its

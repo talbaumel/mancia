@@ -6,8 +6,6 @@ import SwiftUI
 /// follow the system appearance. The lane uses native Liquid Glass where
 /// available and an ultra-thin material on older macOS releases.
 enum RibbonPalette {
-    static let glassTint = Palette.dynamic(
-        light: 0xF5EFE3, dark: 0x211C16, lightAlpha: 0.58, darkAlpha: 0.72)
     static let laneEdge = Palette.dynamic(
         light: 0x1A1611, dark: 0xFFFFFF, lightAlpha: 0.14, darkAlpha: 0.16)
     /// The lifted surface inside the glass lane: menus and Direction field.
@@ -42,10 +40,9 @@ extension View {
     @ViewBuilder
     func ribbonGlassBackground<S: Shape>(in shape: S) -> some View {
         if #available(macOS 26.0, *) {
-            glassEffect(.regular.tint(RibbonPalette.glassTint), in: shape)
+            glassEffect(.regular, in: shape)
         } else {
             background(shape.fill(.ultraThinMaterial))
-                .background(shape.fill(RibbonPalette.glassTint))
         }
     }
 }

@@ -23,7 +23,7 @@ body:
       description: The exact sequence you followed.
       placeholder: |
         1. Select text in <app>
-        2. Press Control-Option-Command-E
+        2. Press Command-Option-A
         3. Press Improve
         4. ...
     validations:

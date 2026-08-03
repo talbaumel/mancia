@@ -35,6 +35,9 @@ final class RibbonWindow {
     private var localMouseMonitor: Any?
     private var globalMouseMonitor: Any?
     private var globalKeyMonitor: Any?
+    /// A nonactivating panel can expose one physical key event to both local
+    /// and global monitor paths. The event timestamp keeps it one action.
+    private var lastNumberEventTimestamp: TimeInterval?
     /// Bumped on every `show()`, so an exit animation still in flight when a
     /// new session opens cannot order the new lane out.
     private var presentationSeq = 0
@@ -298,9 +301,17 @@ final class RibbonWindow {
             menuBarHidden: menuBarHidden,
             selectionRect: selectionRect,
             pointerLocation: pointerLocation,
-            preferredWidth: model.smartEditExpanded ? nil : RibbonPlacement.compactWidth,
+            preferredWidth: preferredWidth,
             establishedAnchor: currentAnchor
         )
+    }
+
+    private var preferredWidth: CGFloat? {
+        if model.smartEditExpanded { return nil }
+        if model.snippetsExpanded {
+            return RibbonPlacement.snippetsWidth(titles: model.snippets.map(\.title))
+        }
+        return RibbonPlacement.compactWidth
     }
 
     /// Is the host running without a menu bar over it? Two ways that happens,
@@ -391,8 +402,18 @@ final class RibbonWindow {
         // consuming it. Input sent to the ribbon itself stays on the local
         // event path, so Direction and ribbon shortcuts continue to work.
         globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) {
-            [weak self] _ in
-            Task { @MainActor in self?.model.onCancel?() }
+            [weak self] event in
+            let command = PanelKeyCommand.resolve(
+                characters: event.charactersIgnoringModifiers,
+                modifiers: event.modifierFlags)
+            Task { @MainActor in
+                guard let self else { return }
+                if case .activateNumber(let index) = command {
+                    self.activateNumber(index, eventTimestamp: event.timestamp)
+                } else {
+                    self.model.onCancel?()
+                }
+            }
         }
     }
 
@@ -409,6 +430,12 @@ final class RibbonWindow {
         localMouseMonitor = nil
         globalMouseMonitor = nil
         globalKeyMonitor = nil
+    }
+
+    private func activateNumber(_ index: Int, eventTimestamp: TimeInterval) {
+        guard lastNumberEventTimestamp != eventTimestamp else { return }
+        lastNumberEventTimestamp = eventTimestamp
+        model.activateNumberedButton(at: index)
     }
 
     // MARK: - Construction
@@ -487,6 +514,11 @@ final class RibbonWindow {
             {
                 if model.focusedCell == .oops {
                     model.runOops()
+                } else if model.focusedCell == .snippets {
+                    model.showSnippets()
+                } else if case .snippet(let index) = model.focusedCell,
+                          model.snippets.indices.contains(index) {
+                    model.runSnippet(model.snippets[index])
                 } else if model.focusedCell == .smartEdit {
                     model.showSmartEdit()
                 } else {
@@ -500,9 +532,8 @@ final class RibbonWindow {
             guard self?.model.smartEditExpanded == true else { return }
             self?.model.toggleScope()
         }
-        panel.onSelectPreset = { [weak self] index in
-            guard self?.model.smartEditExpanded == true else { return }
-            self?.model.selectPreset(at: index)
+        panel.onActivateNumber = { [weak self] index, eventTimestamp in
+            self?.activateNumber(index, eventTimestamp: eventTimestamp)
         }
         panel.onClearPreset = { [weak self] in
             guard self?.model.smartEditExpanded == true else { return }

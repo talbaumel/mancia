@@ -100,7 +100,7 @@ struct ShortcutRecorderView: View {
 
     // MARK: - Display
 
-    /// Symbolic display of a shortcut (e.g. "⌃⌥⌘E"). KeyboardShortcuts 1.15
+    /// Symbolic display of a shortcut (e.g. "⌥⌘A"). KeyboardShortcuts 1.15
     /// builds this description from its key map without loading a resource
     /// bundle, so it is safe in Mancia's hand-assembled app bundle.
     @MainActor
