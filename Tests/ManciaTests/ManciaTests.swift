@@ -2116,7 +2116,7 @@ func placementWithoutPointerCentersOnTheHost() {
 
 @Test("The lane opens below and centers on the captured pointer")
 func placementFollowsThePointer() {
-    let pointer = CGPoint(x: 320, y: 500)
+    let pointer = CGPoint(x: 720, y: 500)
     let resolved = RibbonPlacement.resolve(
         height: 56,
         in: .init(
