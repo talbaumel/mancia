@@ -131,6 +131,14 @@ final class RibbonWindow: NSObject {
         if model.focusedCell != .none { model.focusSeq &+= 1 }
     }
 
+    /// Leave the lane visible while returning key status to the target app.
+    /// Some non-AppKit editors reject PID-targeted editing commands while a
+    /// foreign nonactivating panel is still the key window.
+    func yieldFocus() {
+        guard let panel, panel.isVisible, panel.isKeyWindow else { return }
+        panel.resignKey()
+    }
+
     /// Whether the lane still holds key status.
     ///
     /// The lane takes key without activating Mancia, so the host app stays

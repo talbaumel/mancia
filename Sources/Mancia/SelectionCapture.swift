@@ -135,6 +135,8 @@ enum SelectionCapture {
         let targetApp = NSWorkspace.shared.frontmostApplication
         let snapshot = await PasteboardSnapshot.capture()
         defer { snapshot.restore() }
+        targetApp?.activate(options: [.activateAllWindows])
+        try? await Task.sleep(for: .milliseconds(60))
         let text = await copyCurrentSelection(pid: targetApp?.processIdentifier)
         return SelectionCaptureResult(text: text, targetApp: targetApp, snapshot: snapshot)
     }
@@ -192,9 +194,10 @@ enum SelectionCapture {
     }
 
     /// Perform a standard editing command in the target app while the ribbon
-    /// remains key. Copy and Cut intentionally update the user's pasteboard.
-    static func perform(_ command: TargetEditCommand, in result: SelectionCaptureResult) {
+    /// remains visible. Copy and Cut intentionally update the user's pasteboard.
+    static func perform(_ command: TargetEditCommand, in result: SelectionCaptureResult) async {
         guard isTargetAlive(result) else { return }
+        await activateTarget(result)
         switch command {
         case .selectAll: postCommandKey(KeyCode.a, to: result)
         case .copy: postCommandKey(KeyCode.c, to: result)
@@ -205,9 +208,16 @@ enum SelectionCapture {
         }
     }
 
-    static func perform(_ keystroke: TargetKeyStroke, in result: SelectionCaptureResult) {
+    static func perform(_ keystroke: TargetKeyStroke, in result: SelectionCaptureResult) async {
         guard isTargetAlive(result) else { return }
+        await activateTarget(result)
         postCommandKey(keystroke.keyCode, to: result, flags: keystroke.eventFlags)
+    }
+
+    private static func activateTarget(_ result: SelectionCaptureResult) async {
+        guard let targetApp = result.targetApp else { return }
+        targetApp.activate(options: [.activateAllWindows])
+        try? await Task.sleep(for: .milliseconds(60))
     }
 
     /// The target app is gone (quit/crashed) — posting keystrokes to a dead or

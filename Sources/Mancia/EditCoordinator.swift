@@ -103,7 +103,7 @@ final class EditCoordinator {
         reloadPrompts()
         model.capturing = true
         ribbon.show()
-        ribbon.focus()
+        ribbon.yieldFocus()
         warmProvider()
         currentTask = Task {
             let result = await SelectionCapture.captureSelection()
@@ -112,7 +112,7 @@ final class EditCoordinator {
             if let keystroke = pendingKeyAndClose {
                 pendingKeyAndClose = nil
                 capturing = false
-                SelectionCapture.perform(keystroke, in: result)
+                await SelectionCapture.perform(keystroke, in: result)
                 currentTask = nil
                 warmProviderAfterClose()
                 return
@@ -126,10 +126,11 @@ final class EditCoordinator {
             model.hasSelection = hasSelection
             model.selectionCharCount = result.text?.count ?? 0
             model.scope = hasSelection ? .selection : .document
+            ribbon.focus()
             if !pendingTargetEdits.isEmpty {
                 let edits = pendingTargetEdits
                 pendingTargetEdits = []
-                for edit in edits { SelectionCapture.perform(edit, in: result) }
+                for edit in edits { await SelectionCapture.perform(edit, in: result) }
             }
             if let snippet = pendingSnippet {
                 pendingSnippet = nil
@@ -314,14 +315,19 @@ final class EditCoordinator {
             if capturing { pendingTargetEdits.append(command) }
             return
         }
-        SelectionCapture.perform(command, in: capture)
+        ribbon.yieldFocus()
+        Task {
+            await SelectionCapture.perform(command, in: capture)
+            ribbon.focus()
+        }
     }
 
     private func forwardKeyAndClose(_ event: NSEvent) {
         let keystroke = TargetKeyStroke(keyCode: event.keyCode, modifiers: event.modifierFlags)
         if let capture {
-            SelectionCapture.perform(keystroke, in: capture)
+            ribbon.yieldFocus()
             cancel()
+            Task { await SelectionCapture.perform(keystroke, in: capture) }
             return
         }
         guard capturing else {
@@ -345,6 +351,7 @@ final class EditCoordinator {
 
     /// Perform the actual text replacement for a resolved strategy.
     private func applyResolved(output: String, strategy: EditSession.ApplyStrategy, capture: SelectionCaptureResult) async {
+        ribbon.yieldFocus()
         switch strategy {
         case .entireDocument:
             await SelectionCapture.apply(text: output, to: capture, entireDocument: true)
@@ -401,6 +408,7 @@ final class EditCoordinator {
         model.phase = .running
         currentTask?.cancel()
         currentTask = Task {
+            ribbon.yieldFocus()
             await SelectionCapture.apply(text: pending.output, to: capture, entireDocument: true)
             if Task.isCancelled { return }
             if let language = pendingInputLanguage {
@@ -434,6 +442,7 @@ final class EditCoordinator {
                 // A full capture rather than a bare probe: the new app needs
                 // its own pasteboard snapshot to restore after the paste, and
                 // its own `targetApp` for every keystroke from here on.
+                ribbon.yieldFocus()
                 let result = await SelectionCapture.captureSelection()
                 newTarget = result
                 observation = .newTarget(
@@ -441,11 +450,13 @@ final class EditCoordinator {
 
             case .probeFreshSelection:
                 guard let capture else { return nil }
+                ribbon.yieldFocus()
                 observation = .freshSelection(
                     await SelectionCapture.captureFreshSelection(from: capture))
 
             case .captureDocument:
                 guard let capture else { return nil }
+                ribbon.yieldFocus()
                 observation = .document(
                     await SelectionCapture.captureEntireDocument(from: capture))
 
