@@ -7,6 +7,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-04
+
+### Fixed
+
+- Run did nothing when clicked. Its label was hidden so the drawn word could be
+  reinstated outside the dimming `disabled` applies, and a plain button's hit
+  region *is* its label — so the lane's one primary control rendered perfectly
+  and answered no mouse. The label is now transparent rather than hidden, and
+  carries the hit shape itself. Return always worked, which is why this went
+  unnoticed: it is the mouse path that was dead, from every action.
+- About reported 0.1.0 while the shipped bundle was 0.2.2. The panel now reads
+  `CFBundleShortVersionString` from the bundle, so it follows the version the
+  release workflow writes instead of a Swift literal that had to be remembered.
+  `Support/Info.plist` is now the only place a version number lives, and tests
+  fail if its two version keys or the changelog's newest release drift apart.
+
+### Changed
+
+- Custom instructions stay tucked away until requested, while the ribbon keeps
+  its core actions visible and exposes keyboard shortcuts on hover.
+- The model picker groups models by provider family and orders versions newest
+  first without changing which model is recommended.
+- The ribbon can be dragged from its background and keeps the user's chosen
+  position while its contents resize.
+- The menu says "About Mancia" and "Quit Mancia", matching the spec and the
+  platform convention.
+- The ribbon answers a selected *block* as well as it answered a selected
+  line. A paragraph or quote too tall to leave room at either end used to send
+  the lane back to the menu bar, on top of the head of the very block it was
+  invoked on; it now stands in the margin beside the block, on the roomier
+  flank, level with its middle and as wide as that margin can hold — covering
+  no text at all.
+- A block with no margin either side settles at whichever of its ends has more
+  room, rather than making the trek to the top of the screen. The predictable
+  resting place is now the last resort, kept for a selection with nowhere at
+  all beside it.
+
+### Added
+
+- `--about-check` opens the About panel, checks the version it reports, and
+  clicks its red close button on both a first open and a reopen — the title bar
+  a unit test cannot reach.
+- `--ribbon-click-check` clicks the lane's Run control the way a user does and
+  asks the model what ran, with the default action and with a preset pinned. A
+  control that draws but takes no hits is invisible to `swift test`; this is
+  the check that would have caught it.
+
+## [0.2.2] - 2026-08-03
+
+### Changed
+
+- The ribbon stays with the text it is editing. A result longer than what it
+  replaced no longer ends up underneath the lane: the placement re-resolves
+  when the lane would cover the new span, and holds still when it would not,
+  so a move only happens when it buys visibility.
+- A selection made mid-session moves the lane with it, re-probing the host
+  window so a selection in another window — or another app on another
+  display — is answered beside the right text on the right screen.
+- The default "flash and close" beat now also requires the lane to still hold
+  key, so clicking back into the host app to select the next passage keeps the
+  session open instead of closing it mid-iteration.
+
 ## [0.2.1] - 2026-08-02
 
 ### Changed
@@ -85,7 +147,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   drag-to-install disk image.
 - Debug/E2E hooks: `--provider-check` and `--complete <action>`.
 
-[Unreleased]: https://github.com/peteriz/mancia/compare/0.2.1...HEAD
+[Unreleased]: https://github.com/peteriz/mancia/compare/0.3.0...HEAD
+[0.3.0]: https://github.com/peteriz/mancia/compare/0.2.2...0.3.0
+[0.2.2]: https://github.com/peteriz/mancia/compare/0.2.1...0.2.2
 [0.2.1]: https://github.com/peteriz/mancia/compare/0.2.0...0.2.1
 [0.2.0]: https://github.com/peteriz/mancia/compare/0.1.1...0.2.0
 [0.1.1]: https://github.com/peteriz/mancia/compare/0.1.0...0.1.1
