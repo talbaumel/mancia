@@ -22,7 +22,8 @@ let package = Package(
             dependencies: [
                 .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts"),
             ],
-            path: "Sources/Mancia"
+            path: "Sources/Mancia",
+            exclude: ["prompts"]
         ),
         .testTarget(
             name: "ManciaTests",

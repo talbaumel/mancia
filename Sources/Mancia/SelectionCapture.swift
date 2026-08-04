@@ -96,6 +96,24 @@ struct SelectionCaptureResult {
     var snapshot: PasteboardSnapshot
 }
 
+enum TargetEditCommand: Equatable, Sendable {
+    case selectAll, copy, paste, cut, undo, redo
+}
+
+struct TargetKeyStroke: Equatable, Sendable {
+    let keyCode: CGKeyCode
+    let eventFlagsRawValue: UInt64
+
+    init(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) {
+        self.keyCode = CGKeyCode(keyCode)
+        eventFlagsRawValue = UInt64(modifiers.rawValue)
+    }
+
+    var eventFlags: CGEventFlags {
+        CGEventFlags(rawValue: eventFlagsRawValue)
+    }
+}
+
 /// Pasteboard-based selection capture and replacement, driven by synthetic
 /// ⌘C / ⌘A / ⌘V / ⌘Z keystrokes. Requires Accessibility permission.
 ///
@@ -106,6 +124,7 @@ struct SelectionCaptureResult {
 enum SelectionCapture {
     private enum KeyCode {
         static let a: CGKeyCode = 0
+        static let x: CGKeyCode = 7
         static let c: CGKeyCode = 8
         static let v: CGKeyCode = 9
         static let z: CGKeyCode = 6
@@ -170,6 +189,25 @@ enum SelectionCapture {
         try? await Task.sleep(for: .milliseconds(150))
         postCommandKey(KeyCode.z, to: result)
         try? await Task.sleep(for: .milliseconds(150))
+    }
+
+    /// Perform a standard editing command in the target app while the ribbon
+    /// remains key. Copy and Cut intentionally update the user's pasteboard.
+    static func perform(_ command: TargetEditCommand, in result: SelectionCaptureResult) {
+        guard isTargetAlive(result) else { return }
+        switch command {
+        case .selectAll: postCommandKey(KeyCode.a, to: result)
+        case .copy: postCommandKey(KeyCode.c, to: result)
+        case .paste: postCommandKey(KeyCode.v, to: result)
+        case .cut: postCommandKey(KeyCode.x, to: result)
+        case .undo: postCommandKey(KeyCode.z, to: result)
+        case .redo: postCommandKey(KeyCode.z, to: result, flags: [.maskCommand, .maskShift])
+        }
+    }
+
+    static func perform(_ keystroke: TargetKeyStroke, in result: SelectionCaptureResult) {
+        guard isTargetAlive(result) else { return }
+        postCommandKey(keystroke.keyCode, to: result, flags: keystroke.eventFlags)
     }
 
     /// The target app is gone (quit/crashed) — posting keystrokes to a dead or
@@ -266,8 +304,12 @@ enum SelectionCapture {
         return (string?.isEmpty == false) ? string : nil
     }
 
-    private static func postCommandKey(_ keyCode: CGKeyCode, to result: SelectionCaptureResult) {
-        postCommandKey(keyCode, toPid: result.targetApp?.processIdentifier)
+    private static func postCommandKey(
+        _ keyCode: CGKeyCode,
+        to result: SelectionCaptureResult,
+        flags: CGEventFlags = .maskCommand
+    ) {
+        postCommandKey(keyCode, toPid: result.targetApp?.processIdentifier, flags: flags)
     }
 
     /// Post a ⌘-keystroke directly to the target process's event queue

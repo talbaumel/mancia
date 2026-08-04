@@ -6,6 +6,7 @@ import KeyboardShortcuts
 struct SettingsView: View {
     @Bindable var settings: AppSettings
     let provider: LLMProvider
+    var onMenuBarVisibilityChange: (Bool) -> Void = { _ in }
 
     /// The command that installs the Copilot CLI, shown when it isn't found.
     private static let installCommand = "npm install -g @github/copilot"
@@ -56,6 +57,28 @@ struct SettingsView: View {
 
             Section("Editing") {
                 Toggle("Show ribbon when text is selected", isOn: $settings.showRibbonOnTextSelection)
+                HStack {
+                    ColorPicker(
+                        "Smart Edit laser",
+                        selection: Binding(
+                            get: { Color(nsColor: settings.smartEditLaserColor) },
+                            set: { settings.smartEditLaserColor = NSColor($0) }
+                        ),
+                        supportsOpacity: false
+                    )
+                    Button {
+                        settings.smartEditLaserColor = AppSettings.color(
+                            from: AppSettings.defaultSmartEditLaserColorHex)
+                    } label: {
+                        Image(systemName: "arrow.counterclockwise")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(
+                        settings.smartEditLaserColorHex
+                            == AppSettings.defaultSmartEditLaserColorHex)
+                    .help("Restore default laser color")
+                    .accessibilityLabel("Restore default laser color")
+                }
             }
 
             Section("General") {
@@ -63,6 +86,10 @@ struct SettingsView: View {
                     get: { settings.launchAtLogin },
                     set: { settings.launchAtLogin = $0 }
                 ))
+                Toggle("Hide menu bar icon", isOn: $settings.hideMenuBarIcon)
+                    .onChange(of: settings.hideMenuBarIcon) {
+                        onMenuBarVisibilityChange(!settings.hideMenuBarIcon)
+                    }
             }
 
             Section {

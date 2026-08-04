@@ -1,4 +1,4 @@
-import CoreGraphics
+import AppKit
 
 /// Where the command ribbon sits, resolved from screen and host-window
 /// geometry. Pure and free of AppKit lookups so every branch is unit-testable;
@@ -7,7 +7,10 @@ import CoreGraphics
 ///
 /// The rule the ribbon rests on:
 ///
-/// > When the host reports where the selected text is, sit against it: just
+/// > Open just below the invocation pointer, or just above it when there is no
+/// > room beneath, and keep that captured point while the lane resizes. When
+/// > the pointer is not on the target display and the host reports where the
+/// > selected text is, sit against it: just
 /// > under the span, just over it if it sits too near the foot of the display
 /// > to fit beneath, and in the margin beside it when it is too tall for
 /// > either end. The window around the text has no say in any of that.
@@ -42,7 +45,8 @@ import CoreGraphics
 /// fallback is the deliberate exception: its opening row clears the words,
 /// but screen clamping can move a grown gate back over the far end.
 ///
-/// The selected span drives *both* axes, and the host window drives neither.
+/// The captured pointer drives both axes when it is on the target display.
+/// Otherwise the selected span drives both axes, and the host window drives neither.
 /// A lane at an end of the selection is centered on the span and as wide as
 /// its current content asks for, bounded by the span and held between
 /// `minimumWidth` and `maximumWidth` — a window ten times the width of the
@@ -96,6 +100,9 @@ enum RibbonPlacement {
         /// the focused element — which is why `RibbonWindow` snapshots it in
         /// `show()` rather than re-reading it per resolution.
         var selectionRect: CGRect?
+        /// Pointer position captured when the lane opened. It is intentionally
+        /// not live: resizing the lane must not make it chase the mouse.
+        var pointerLocation: CGPoint?
         /// The anchor the lane settled on when it opened, once it has opened.
         ///
         /// Placement is decided once and then held. The lane can grow vertically
@@ -125,6 +132,7 @@ enum RibbonPlacement {
             safeAreaTop: CGFloat = 0,
             menuBarHidden: Bool = false,
             selectionRect: CGRect? = nil,
+            pointerLocation: CGPoint? = nil,
             establishedAnchor: Anchor? = nil,
             preferredWidth: CGFloat = RibbonPlacement.maximumWidth,
             minimumContentWidth: CGFloat = RibbonPlacement.minimumWidth
@@ -135,6 +143,7 @@ enum RibbonPlacement {
             self.safeAreaTop = safeAreaTop
             self.menuBarHidden = menuBarHidden
             self.selectionRect = selectionRect
+            self.pointerLocation = pointerLocation
             self.establishedAnchor = establishedAnchor
             self.preferredWidth = preferredWidth
             self.minimumContentWidth = minimumContentWidth
@@ -154,6 +163,10 @@ enum RibbonPlacement {
         case belowSelection
         /// Floating just over it, when there was no room underneath.
         case aboveSelection
+        /// Floating just under the invocation pointer.
+        case belowPointer
+        /// Floating just over the invocation pointer.
+        case abovePointer
         /// In the margin to the left of the selection, when the block is too
         /// tall to sit at either end of.
         case leftOfSelection
@@ -171,8 +184,10 @@ enum RibbonPlacement {
         /// from under the words rather than dropping past them.
         var entranceDirection: CGVector {
             switch self {
-            case .screen, .hostWindow, .belowSelection: CGVector(dx: 0, dy: -1)
-            case .aboveSelection: CGVector(dx: 0, dy: 1)
+            case .screen, .hostWindow, .belowSelection, .belowPointer:
+                CGVector(dx: 0, dy: -1)
+            case .aboveSelection, .abovePointer:
+                CGVector(dx: 0, dy: 1)
             case .leftOfSelection: CGVector(dx: -1, dy: 0)
             case .rightOfSelection: CGVector(dx: 1, dy: 0)
             }
@@ -190,13 +205,53 @@ enum RibbonPlacement {
     /// level — is what keeps the lane reachable.
     static let revealClearance: CGFloat = 28
 
+    static let compactOopsWidth: CGFloat = 72
+    static let compactSnippetsWidth: CGFloat = 108
+    static let compactSmartEditWidth: CGFloat = 114
+    static let compactSnippetMinWidth: CGFloat = 56
+    static let compactSnippetMaxWidth: CGFloat = 280
+
+    static func compactSnippetWidth(for title: String) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        let textWidth = ceil((title as NSString).size(withAttributes: [.font: font]).width)
+        return min(compactSnippetMaxWidth, max(compactSnippetMinWidth, textWidth + 40))
+    }
+
+    static let compactWidth: CGFloat =
+        compactOopsWidth + 8 + compactSnippetsWidth + 8 + compactSmartEditWidth + 24
+
+    static func snippetsWidth(titles: [String]) -> CGFloat {
+        let widths = titles.map(compactSnippetWidth)
+        return widths.reduce(0, +) + CGFloat(max(0, widths.count - 1) * 8) + 24
+    }
+
+    static func smartEditActionWidth(title: String, progress: String) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        let textWidth = [title, progress, "Cancel"]
+            .map { ($0 as NSString).size(withAttributes: [.font: font]).width }
+            .max() ?? 0
+        // Matches actionButton: 14pt symbol + 6pt gap + 12pt padding per side.
+        return min(compactSnippetMaxWidth, max(76, ceil(textWidth) + 44))
+    }
+
+    static func smartEditWidth(presets: [PanelPreset], customExpanded: Bool) -> CGFloat {
+        let presetWidths = presets.map {
+            smartEditActionWidth(title: $0.title, progress: $0.progressLabel)
+        }
+        let trailingWidth = customExpanded
+            ? 428
+            : smartEditActionWidth(title: "Custom", progress: "Working")
+        let controlCount = presets.count + 1
+        return presetWidths.reduce(trailingWidth, +)
+            + CGFloat(max(0, controlCount - 1) * 8)
+            + 16
+    }
+
     /// Never let the lane get narrower than this; below it the row's controls
     /// cannot hold their labels.
     static let minimumWidth: CGFloat = 558
 
-    /// The fixed width for every buttons-only state. Each action reserves room
-    /// for its running label, so no phase needs spare horizontal room or resizes
-    /// the panel.
+    /// Fallback width used by previews and tests without a loaded prompt catalog.
     static let standardWidth: CGFloat = 558
 
     /// Custom's fixed width: four icon actions, a 428pt direction group, and equal
@@ -218,6 +273,7 @@ enum RibbonPlacement {
     /// against, so the two never touch. Applied on both axes: the lane sits
     /// against the flanks of a tall selection as readily as against its ends.
     static let selectionClearance: CGFloat = 8
+    static let pointerClearance: CGFloat = 12
 
     /// The least room an *end* of the selection has to offer before the lane
     /// will settle against it anyway — the last stop before the predictable
@@ -270,11 +326,15 @@ enum RibbonPlacement {
         // The minimum wins over the maximum: a lane too narrow to lay out is a
         // worse failure than one wider than its host, which merely overhangs.
         let requestedWidth = max(
-            minimumWidth, min(context.preferredWidth, maximumWidth))
+            context.minimumContentWidth, min(context.preferredWidth, maximumWidth))
         let contentFloor = min(
-            requestedWidth, max(minimumWidth, context.minimumContentWidth))
+            requestedWidth, context.minimumContentWidth)
         let restingWidth = max(contentFloor, min(restingHost.width, requestedWidth))
         let restingX = restingHost.minX + (restingHost.width - restingWidth) / 2
+        let validPointer = context.pointerLocation.flatMap { pointer in
+            context.screenFrame.contains(pointer) ? pointer : nil
+        }
+        let pointerX = (validPointer?.x ?? restingHost.midX) - requestedWidth / 2
 
         let selection = avoidedSelection(in: context)
         // A lane at an end of the selection follows the selected span, not the
@@ -342,6 +402,14 @@ enum RibbonPlacement {
                 CGRect(
                     x: selectionX, y: selection?.maxY ?? floor,
                     width: selectionWidth, height: h)
+            case .belowPointer:
+                CGRect(
+                    x: pointerX, y: (validPointer?.y ?? restingTop) - pointerClearance - h,
+                    width: requestedWidth, height: h)
+            case .abovePointer:
+                CGRect(
+                    x: pointerX, y: (validPointer?.y ?? floor) + pointerClearance,
+                    width: requestedWidth, height: h)
             case .leftOfSelection, .rightOfSelection:
                 marginFrame(anchor, h) ?? restingFrame
             }
@@ -349,6 +417,12 @@ enum RibbonPlacement {
         }
 
         func choose() -> Anchor {
+            if let pointer = validPointer {
+                let tall = max(height, projectedHeight)
+                if pointer.y - pointerClearance - tall >= floor { return .belowPointer }
+                if pointer.y + pointerClearance + tall <= ceiling { return .abovePointer }
+                return pointer.y >= (floor + ceiling) / 2 ? .belowPointer : .abovePointer
+            }
             guard let selection else { return resting }
             // Judged at the lane's tallest ordinary state — see `projectedHeight`.
             let tall = max(height, projectedHeight)

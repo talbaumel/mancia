@@ -1,0 +1,1 @@
+Rewrite the text as a request for the agent to investigate and propose a plan before making changes. Preserve the original goal, constraints, and concrete details. Ask the agent to explore the relevant code, present a step-by-step plan and open questions, and wait for approval. Do not produce the plan yourself. Return only the rewritten request.

@@ -13,6 +13,22 @@ struct PanelPreset: Identifiable, Equatable, Sendable {
     /// Menu title.
     let title: String
     let action: EditAction
+    let symbol: String
+    let progressLabel: String
+
+    init(
+        id: String,
+        title: String,
+        action: EditAction,
+        symbol: String? = nil,
+        progressLabel: String? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.action = action
+        self.symbol = symbol ?? action.symbol
+        self.progressLabel = progressLabel ?? action.progressLabel
+    }
 
     static let improve = PanelPreset(id: "improve", title: "Improve", action: .improve)
     static let sharpen = PanelPreset(id: "sharpen", title: "Sharpen", action: .sharpen)

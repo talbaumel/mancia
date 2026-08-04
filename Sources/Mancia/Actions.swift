@@ -14,6 +14,7 @@ enum EditAction: Equatable, Sendable {
     case rewrite
     case summarize
     case fixGrammar
+    case prompt(instruction: String, progressLabel: String)
     case custom(String)
 
     /// Short user-facing label for buttons/menus.
@@ -26,6 +27,7 @@ enum EditAction: Equatable, Sendable {
         case .rewrite: return "Rewrite"
         case .summarize: return "Summarize"
         case .fixGrammar: return "Proofread"
+        case .prompt: return "Prompt"
         case .custom: return "Custom"
         }
     }
@@ -47,6 +49,7 @@ enum EditAction: Equatable, Sendable {
         case .rewrite: return "pencil.and.outline"
         case .summarize: return "text.line.first.and.arrowtriangle.forward"
         case .fixGrammar: return "text.badge.checkmark"
+        case .prompt: return "sparkles"
         case .custom: return "sparkles"
         }
     }
@@ -61,6 +64,7 @@ enum EditAction: Equatable, Sendable {
         case .rewrite: return "Rewriting"
         case .summarize: return "Summarizing"
         case .fixGrammar: return "Proofreading"
+        case .prompt(_, let progressLabel): return progressLabel
         case .custom: return "Working"
         }
     }
@@ -207,6 +211,7 @@ enum PromptBuilder {
         case .rewrite: base = rewriteTemplate
         case .summarize: base = summarizeTemplate
         case .fixGrammar: base = proofreadTemplate
+        case .prompt(let instruction, _): return .custom(request: instruction)
         case .custom(let request): return .custom(request: request)
         }
         let trimmed = note?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

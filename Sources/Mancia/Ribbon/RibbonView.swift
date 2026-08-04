@@ -8,8 +8,8 @@ import SwiftUI
 /// menu bar, or under the frontmost window's title bar. See `RibbonPlacement`.
 ///
 /// The lane is one compact strip of actions.
-/// All five actions are visible; selecting Custom replaces it with Direction
-/// while the four built-in actions stay put. The cells carry no captions: they
+/// File-backed prompt actions are visible; selecting Custom replaces it with
+/// Direction while the prompt actions stay put. The cells carry no captions: they
 /// were the first thing to go when the row was collapsed to one line, and the
 /// resolved action is spelled out in the Action chip itself instead — which is
 /// what the panel
@@ -25,6 +25,8 @@ struct RibbonView: View {
     let width: CGFloat
     /// Which edge the lane hangs from, which drives the corner treatment.
     let anchor: RibbonPlacement.Anchor
+    /// User-selected tint for the animated Smart Edit processing border.
+    var laserColor: Color = RibbonPalette.processing
     /// False for the off-screen copy `RibbonWindow` measures against. That copy
     /// must not ask for a resize (it would recurse) and must not speak to
     /// VoiceOver (the user would hear everything twice).
@@ -109,6 +111,9 @@ struct RibbonView: View {
             customRunHovered = false
             relayout()
         }
+        .onChange(of: model.snippets) { relayout() }
+        .onChange(of: model.snippetsExpanded) { relayout() }
+        .onChange(of: model.smartEditExpanded) { relayout() }
         .onChange(of: model.previewExpanded) { relayout() }
         .onChange(of: model.errorDetailsExpanded) { relayout() }
         .onChange(of: model.errorText) { relayout() }
@@ -123,7 +128,8 @@ struct RibbonView: View {
             UnevenRoundedRectangle(
                 topLeadingRadius: 0, bottomLeadingRadius: 20,
                 bottomTrailingRadius: 20, topTrailingRadius: 0, style: .continuous)
-        case .hostWindow, .belowSelection, .aboveSelection, .leftOfSelection, .rightOfSelection:
+           case .hostWindow, .belowSelection, .aboveSelection, .belowPointer, .abovePointer,
+               .leftOfSelection, .rightOfSelection:
             UnevenRoundedRectangle(
                 topLeadingRadius: 20, bottomLeadingRadius: 20,
                 bottomTrailingRadius: 20, topTrailingRadius: 20, style: .continuous)
@@ -136,7 +142,7 @@ struct RibbonView: View {
 
     // MARK: - Command row
 
-    /// One line of five Actions. Direction and its inline Run control replace
+    /// One line of prompt actions. Direction and its inline Run control replace
     /// Custom while it is selected.
     ///
     /// Each cell used to carry a caption above its value. They were the widest
@@ -148,7 +154,13 @@ struct RibbonView: View {
     private var commandRow: some View {
         HStack(spacing: 0) {
             Spacer(minLength: 0)
-            actionStrip
+            if model.smartEditExpanded {
+                actionStrip
+            } else if model.snippetsExpanded {
+                snippetControls
+            } else {
+                mainMenuControls
+            }
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 8)
@@ -162,12 +174,75 @@ struct RibbonView: View {
 
     // MARK: - Cells
 
-    /// The four built-ins keep fixed positions. Direction replaces Custom's
+    private var mainMenuControls: some View {
+        HStack(spacing: 8) {
+            compactButton(
+                "Oops", symbol: "keyboard", width: RibbonPlacement.compactOopsWidth,
+                cell: .oops, help: "Switch English and Hebrew keyboard layout"
+            ) { model.runOops() }
+            compactButton(
+                "Snippets", symbol: "doc.on.clipboard",
+                width: RibbonPlacement.compactSnippetsWidth,
+                cell: .snippets, help: "Show local snippet keys"
+            ) { model.showSnippets() }
+            compactButton(
+                "Smart Edit", symbol: "sparkles",
+                width: RibbonPlacement.compactSmartEditWidth,
+                cell: .smartEdit, help: "Show AI-powered editing controls"
+            ) { model.showSmartEdit() }
+        }
+    }
+
+    @ViewBuilder
+    private var snippetControls: some View {
+        HStack(spacing: 8) {
+            ForEach(Array(model.snippets.enumerated()), id: \.element.id) { index, snippet in
+                compactButton(
+                    snippet.title, symbol: nil,
+                    width: RibbonPlacement.compactSnippetWidth(for: snippet.title),
+                    cell: .snippet(index), help: "Paste \(snippet.title)"
+                ) { model.runSnippet(snippet) }
+            }
+        }
+    }
+
+    private func compactButton(
+        _ title: String,
+        symbol: String?,
+        width: CGFloat,
+        cell: PanelModel.Cell,
+        help: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                if let symbol { Image(systemName: symbol) }
+                Text(title).lineLimit(1).truncationMode(.tail)
+            }
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(RibbonPalette.text)
+            .frame(width: width, height: controlHeight)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(controlShape.fill(RibbonPalette.controlTint))
+        .overlay(controlShape.strokeBorder(RibbonPalette.controlEdge, lineWidth: 1))
+        .focusable()
+        .focused($focus, equals: cell)
+        .ribbonFocusRing(model.focusedCell == cell, radius: 8, inset: 0)
+        .disabled(locked)
+        .opacity(locked ? 0.5 : 1)
+        .help(help)
+        .accessibilityLabel(title)
+        .accessibilityIdentifier(title.replacingOccurrences(of: " ", with: ""))
+    }
+
+    /// The loaded prompts keep fixed positions. Direction replaces Custom's
     /// trailing slot and absorbs the room added by the expanded ribbon.
     private var actionStrip: some View {
         HStack(spacing: 8) {
             ForEach(model.actionDisplayOrder, id: \.self) { index in
-                if index == PanelModel.customActionIndex,
+                if index == model.dynamicCustomActionIndex,
                    model.isCustomInstructionSelected
                 {
                     directionCell
@@ -226,7 +301,7 @@ struct RibbonView: View {
             if processing {
                 SwooshBorder(
                     shape: controlShape,
-                    tint: RibbonPalette.processing,
+                    tint: laserColor,
                     animated: !reduceMotion,
                     lineWidth: 2)
             } else {
@@ -253,9 +328,13 @@ struct RibbonView: View {
         .accessibilityValue(processing ? "In progress" : selected ? "Selected" : "Not selected")
         .accessibilityHint(processing
             ? "Click to cancel."
-            : index == PanelModel.customActionIndex
-                ? "Command \(index + 1). Opens the custom instruction field."
-                : "Command \(index + 1). Runs immediately.")
+            : index == model.dynamicCustomActionIndex
+                ? shortcut.isEmpty
+                    ? "Opens the custom instruction field."
+                    : "Command \(index + 1). Opens the custom instruction field."
+                : shortcut.isEmpty
+                    ? "Runs immediately."
+                    : "Command \(index + 1). Runs immediately.")
         .accessibilityIdentifier("Action-\(index + 1)")
     }
 
@@ -333,7 +412,7 @@ struct RibbonView: View {
             if processing {
                 SwooshBorder(
                     shape: controlShape,
-                    tint: RibbonPalette.processing,
+                    tint: laserColor,
                     animated: !reduceMotion,
                     lineWidth: 2)
             }

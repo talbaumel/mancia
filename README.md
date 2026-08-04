@@ -74,10 +74,9 @@ signed, so macOS asks again after each rebuild.
 
 1. Select text in any app.
 2. Press <kbd>⌃</kbd><kbd>⌥</kbd><kbd>⌘</kbd><kbd>E</kbd>.
-3. Choose the outcome you need with **Improve**, **Sharpen**, **Plan first** or
-   **Tighten**; click it or press <kbd>⌘1</kbd>…<kbd>⌘4</kbd> to run it
-   immediately. For anything else, click **Custom** or press <kbd>⌘5</kbd> and
-   describe the result — *“make it decisive, one sentence”*, *“rewrite in a
+3. Choose a Smart Edit prompt; click it or press its displayed number shortcut
+  to run it immediately. For anything else, click **Custom** and describe the
+  result — *“make it decisive, one sentence”*, *“rewrite in a
    friendlier tone”*, *“turn these notes into bullets”*.
 
 The result replaces the selection in place. With nothing selected, Mancia takes
@@ -88,8 +87,7 @@ the whole document and asks before overwriting it.
 | <kbd>Return</kbd> | Run the edit |
 | <kbd>←</kbd> / <kbd>→</kbd> | Step between versions |
 | <kbd>Tab</kbd> | Move between the ribbon's cells |
-| <kbd>⌘1</kbd> / <kbd>⌘2</kbd> / <kbd>⌘3</kbd> / <kbd>⌘4</kbd> | Run Improve / Sharpen / Plan first / Tighten immediately |
-| <kbd>⌘5</kbd> | Select Custom and reveal its field |
+| <kbd>⌘1</kbd> … <kbd>⌘9</kbd> | Activate the matching visible Smart Edit control |
 | <kbd>⌘T</kbd> | Switch target: selection ↔ whole document |
 | <kbd>⌘,</kbd> | Settings |
 | <kbd>Esc</kbd> | Close the ribbon |
@@ -97,6 +95,26 @@ the whole document and asks before overwriting it.
 **Settings** (from the menu bar) changes the global shortcut, the Copilot model
 and reasoning effort, the CLI path, launch at login, and whether the ribbon
 closes after an edit.
+
+### Customize Smart Edit
+
+On first use, Mancia creates `~/Documents/Mancia/prompts/`. Each Markdown file
+contains one editing instruction. `prompts.yaml` controls which buttons appear,
+their order, title, SF Symbol, progress label, and whether they are enabled:
+
+```yaml
+prompts:
+  - file: improve.md
+    title: Improve
+    symbol: wand.and.rays
+    progress: Improving
+    enabled: true
+```
+
+Changes are loaded whenever a new ribbon session starts. Reorder entries to
+reorder buttons, set `enabled: false` to hide one, or add another `.md` file and
+manifest entry to create a button. The first nine visible controls use
+`⌘1` through `⌘9`; controls after that remain clickable and keyboard-focusable.
 
 ## Privacy
 

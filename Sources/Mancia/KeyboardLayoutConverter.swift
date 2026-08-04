@@ -4,6 +4,22 @@ import Foundation
 /// mistake. Direction is inferred from the characters that belong uniquely to
 /// each layout; characters outside the keyboard map are preserved.
 enum KeyboardLayoutConverter {
+    enum Language: Equatable, Sendable {
+        case english, hebrew
+
+        var languageCode: String {
+            switch self {
+            case .english: "en"
+            case .hebrew: "he"
+            }
+        }
+    }
+
+    struct Conversion: Equatable, Sendable {
+        let text: String
+        let language: Language
+    }
+
     private static let englishKeys = Array("`qwertyuiop[]\\asdfghjkl;'zxcvbnm,./")
     private static let hebrewKeys = Array(";/׳קראטוןםפ][\\שדגכעיחלךף,זסבהנמצתץ.")
 
@@ -18,6 +34,10 @@ enum KeyboardLayoutConverter {
     }()
 
     static func convert(_ text: String) -> String {
+        conversion(of: text).text
+    }
+
+    static func conversion(of text: String) -> Conversion {
         let hebrewScore = text.reduce(into: 0) { score, character in
             if hebrewToEnglish[character] != nil, englishToHebrew[character] == nil {
                 score += 1
@@ -31,11 +51,15 @@ enum KeyboardLayoutConverter {
         }
 
         if hebrewScore > englishScore {
-            return String(text.map { hebrewToEnglish[$0] ?? $0 })
+            return Conversion(
+                text: String(text.map { hebrewToEnglish[$0] ?? $0 }),
+                language: .english)
         }
-        return String(text.map { character in
-            let lowercased = Character(String(character).lowercased())
-            return englishToHebrew[lowercased] ?? character
-        })
+        return Conversion(
+            text: String(text.map { character in
+                let lowercased = Character(String(character).lowercased())
+                return englishToHebrew[lowercased] ?? character
+            }),
+            language: .hebrew)
     }
 }

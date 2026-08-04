@@ -16,10 +16,11 @@ final class KeyablePanel: NSPanel {
     var onKeyDown: ((NSEvent) -> Bool)?
     var onOpenSettings: (() -> Void)?
     var onSubmit: (() -> Void)?
+    var onEditTarget: ((TargetEditCommand) -> Void)?
     /// ⌘T — swap the target between the selection and the whole document.
     var onToggleTarget: (() -> Void)?
-    /// ⌘1…⌘5 — activate the matching visible action button.
-    var onActivateAction: ((Int) -> Void)?
+    /// ⌘1…⌘9 — activate the matching visible action button.
+    var onActivateAction: ((Int, TimeInterval) -> Void)?
     /// ⌘Z after the instruction field has exhausted its own undo stack.
     var onUndoVersion: (() -> Bool)?
 
@@ -46,22 +47,27 @@ final class KeyablePanel: NSPanel {
         else { return super.performKeyEquivalent(with: event) }
 
         switch command {
-        case .selectAll: dispatchEditorAction(#selector(NSText.selectAll(_:)))
-        case .copy: dispatchEditorAction(#selector(NSText.copy(_:)))
-        case .paste: dispatchEditorAction(#selector(NSText.paste(_:)))
-        case .cut: dispatchEditorAction(#selector(NSText.cut(_:)))
+        case .selectAll: dispatchEditAction(#selector(NSText.selectAll(_:)), target: .selectAll)
+        case .copy: dispatchEditAction(#selector(NSText.copy(_:)), target: .copy)
+        case .paste: dispatchEditAction(#selector(NSText.paste(_:)), target: .paste)
+        case .cut: dispatchEditAction(#selector(NSText.cut(_:)), target: .cut)
         case .undo:
             if let undo = fieldUndoManager, undo.canUndo {
                 undo.undo()
-            } else {
-                _ = onUndoVersion?()
+            } else if onUndoVersion?() != true {
+                onEditTarget?(.undo)
             }
-        case .redo: if let undo = fieldUndoManager, undo.canRedo { undo.redo() }
+        case .redo:
+            if let undo = fieldUndoManager, undo.canRedo {
+                undo.redo()
+            } else {
+                onEditTarget?(.redo)
+            }
         case .closePanel: onCancel?()
         case .openSettings: onOpenSettings?()
         case .submit: onSubmit?()
         case .toggleTarget: onToggleTarget?()
-        case .activateAction(let index): onActivateAction?(index)
+        case .activateAction(let index): onActivateAction?(index, event.timestamp)
         }
         // Always consume a recognized shortcut, like a menu item would —
         // a no-op (e.g. nothing to undo) should not fall through and beep.
@@ -73,6 +79,14 @@ final class KeyablePanel: NSPanel {
     /// the matching Edit-menu item would do.
     private func dispatchEditorAction(_ action: Selector) {
         _ = NSApp.sendAction(action, to: nil, from: self)
+    }
+
+    private func dispatchEditAction(_ action: Selector, target: TargetEditCommand) {
+        if firstResponder is NSTextView {
+            dispatchEditorAction(action)
+        } else {
+            onEditTarget?(target)
+        }
     }
 
     /// The focused field's undo stack (the field editor is an NSTextView).

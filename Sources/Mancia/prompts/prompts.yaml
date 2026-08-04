@@ -1,0 +1,22 @@
+# Entries appear in this order. Set enabled to false to hide a button.
+prompts:
+  - file: improve.md
+    title: Improve
+    symbol: wand.and.rays
+    progress: Improving
+    enabled: true
+  - file: sharpen.md
+    title: Sharpen
+    symbol: target
+    progress: Sharpening
+    enabled: true
+  - file: plan-first.md
+    title: Plan first
+    symbol: checklist
+    progress: Planning
+    enabled: true
+  - file: tighten.md
+    title: Tighten
+    symbol: arrow.down.right.and.arrow.up.left
+    progress: Tightening
+    enabled: true

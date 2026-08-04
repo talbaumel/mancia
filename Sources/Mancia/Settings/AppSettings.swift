@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 import ServiceManagement
@@ -26,6 +27,7 @@ enum PostApplyBehavior: String, CaseIterable, Identifiable, Sendable {
 @Observable
 final class AppSettings {
     static let shared = AppSettings()
+    static let defaultSmartEditLaserColorHex = "49B8FF"
 
     private enum Key {
         static let copilotPath = "copilotPath"
@@ -35,6 +37,8 @@ final class AppSettings {
         static let postApplyBehavior = "postApplyBehavior"
         static let confirmWholeDocumentReplace = "confirmWholeDocumentReplace"
         static let showRibbonOnTextSelection = "showRibbonOnTextSelection"
+        static let smartEditLaserColor = "smartEditLaserColor"
+        static let hideMenuBarIcon = "hideMenuBarIcon"
     }
 
     private let defaults: UserDefaults
@@ -82,6 +86,16 @@ final class AppSettings {
     /// the ribbon. The global shortcut and menu command remain available when off.
     var showRibbonOnTextSelection: Bool {
         didSet { defaults.set(showRibbonOnTextSelection, forKey: Key.showRibbonOnTextSelection) }
+    }
+    private(set) var smartEditLaserColorHex: String {
+        didSet { defaults.set(smartEditLaserColorHex, forKey: Key.smartEditLaserColor) }
+    }
+    var smartEditLaserColor: NSColor {
+        get { Self.color(from: smartEditLaserColorHex) }
+        set { smartEditLaserColorHex = Self.hexString(from: newValue) }
+    }
+    var hideMenuBarIcon: Bool {
+        didSet { defaults.set(hideMenuBarIcon, forKey: Key.hideMenuBarIcon) }
     }
 
     /// Designated initializer. `modelCatalog` is injected (rather than always
@@ -147,6 +161,35 @@ final class AppSettings {
             defaults.object(forKey: Key.confirmWholeDocumentReplace) as? Bool ?? true
         self.showRibbonOnTextSelection =
             defaults.object(forKey: Key.showRibbonOnTextSelection) as? Bool ?? true
+        self.smartEditLaserColorHex = Self.normalizedColorHex(
+            defaults.string(forKey: Key.smartEditLaserColor))
+        self.hideMenuBarIcon = defaults.bool(forKey: Key.hideMenuBarIcon)
+    }
+
+    static func normalizedColorHex(_ value: String?) -> String {
+        guard let value else { return defaultSmartEditLaserColorHex }
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+            .uppercased()
+        guard normalized.count == 6, Int(normalized, radix: 16) != nil else {
+            return defaultSmartEditLaserColorHex
+        }
+        return normalized
+    }
+
+    static func color(from hex: String) -> NSColor {
+        let value = Int(normalizedColorHex(hex), radix: 16) ?? 0x49B8FF
+        return Palette.nsColor(value)
+    }
+
+    static func hexString(from color: NSColor) -> String {
+        guard let rgb = color.usingColorSpace(.sRGB) else {
+            return defaultSmartEditLaserColorHex
+        }
+        let red = Int((rgb.redComponent * 255).rounded())
+        let green = Int((rgb.greenComponent * 255).rounded())
+        let blue = Int((rgb.blueComponent * 255).rounded())
+        return String(format: "%02X%02X%02X", red, green, blue)
     }
 
     // MARK: - Launch at login

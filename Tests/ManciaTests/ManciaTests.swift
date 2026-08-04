@@ -330,6 +330,41 @@ func confirmSettingDefaultsOnAndPersists() {
 }
 
 @MainActor
+@Test("Smart Edit laser color defaults, normalizes, and persists")
+func smartEditLaserColorPersists() {
+    let suite = "mancia-test-\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    let first = AppSettings(defaults: defaults, modelCatalog: { [] })
+    #expect(first.smartEditLaserColorHex == AppSettings.defaultSmartEditLaserColorHex)
+
+    first.smartEditLaserColor = NSColor(
+        srgbRed: 1, green: 0.25, blue: 0.5, alpha: 1)
+    #expect(first.smartEditLaserColorHex == "FF4080")
+
+    let second = AppSettings(defaults: defaults, modelCatalog: { [] })
+    #expect(second.smartEditLaserColorHex == "FF4080")
+    #expect(AppSettings.normalizedColorHex("#49b8ff") == "49B8FF")
+    #expect(AppSettings.normalizedColorHex("invalid") == AppSettings.defaultSmartEditLaserColorHex)
+}
+
+@MainActor
+@Test("Menu bar icon visibility defaults visible and persists")
+func menuBarIconVisibilityPersists() {
+    let suite = "mancia-test-\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    let first = AppSettings(defaults: defaults, modelCatalog: { [] })
+    #expect(first.hideMenuBarIcon == false)
+
+    first.hideMenuBarIcon = true
+    let second = AppSettings(defaults: defaults, modelCatalog: { [] })
+    #expect(second.hideMenuBarIcon == true)
+}
+
+@MainActor
 @Test("Never-configured copilotModel resolves to the recommended fast model and persists it")
 func copilotModelFirstRunResolvesRecommendation() {
     let suite = "mancia-test-\(UUID().uuidString)"
@@ -1066,6 +1101,10 @@ func panelKeyCommandsResolve() {
         ("3", .command, .activateAction(2)),
         ("4", .command, .activateAction(3)),
         ("5", .command, .activateAction(4)),
+        ("6", .command, .activateAction(5)),
+        ("7", .command, .activateAction(6)),
+        ("8", .command, .activateAction(7)),
+        ("9", .command, .activateAction(8)),
     ]
     for c in cases {
         #expect(
@@ -1087,7 +1126,39 @@ func panelKeyCommandsRejectNonShortcuts() {
     #expect(PanelKeyCommand.resolve(characters: "\r", modifiers: []) == nil)
     #expect(PanelKeyCommand.resolve(characters: "1", modifiers: []) == nil)
     #expect(PanelKeyCommand.resolve(characters: "0", modifiers: .command) == nil)
-    #expect(PanelKeyCommand.resolve(characters: "6", modifiers: .command) == nil)
+}
+
+@MainActor
+@Test("Editing shortcuts forward to the target when ribbon controls have focus")
+func panelEditingShortcutsForwardToTarget() throws {
+    let panel = KeyablePanel(
+        contentRect: .zero,
+        styleMask: [.nonactivatingPanel],
+        backing: .buffered,
+        defer: false)
+    var forwarded: [TargetEditCommand] = []
+    panel.onEditTarget = { forwarded.append($0) }
+    panel.onUndoVersion = { false }
+    let cases: [(String, NSEvent.ModifierFlags, UInt16)] = [
+        ("a", .command, 0), ("c", .command, 8), ("v", .command, 9),
+        ("x", .command, 7), ("z", .command, 6), ("z", [.command, .shift], 6),
+    ]
+    for (characters, modifiers, keyCode) in cases {
+        let event = try #require(NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: modifiers,
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            characters: characters,
+            charactersIgnoringModifiers: characters,
+            isARepeat: false,
+            keyCode: keyCode))
+        #expect(panel.performKeyEquivalent(with: event))
+    }
+
+    #expect(forwarded == [.selectAll, .copy, .paste, .cut, .undo, .redo])
 }
 
 @Test("Tab and shift-Tab resolve to focus moves")
@@ -1110,6 +1181,18 @@ func panelKeyCommandsResolvePrimaryReturn() {
     #expect(!PanelKeyCommand.isPrimaryReturn(keyCode: 36, modifiers: .command))
     #expect(!PanelKeyCommand.isPrimaryReturn(keyCode: 36, modifiers: .shift))
     #expect(!PanelKeyCommand.isPrimaryReturn(keyCode: 48, modifiers: []))
+}
+
+@Test("Target keystrokes preserve physical keys and modifiers")
+func targetKeystrokesPreserveKeysAndModifiers() {
+    let plain = TargetKeyStroke(keyCode: 51, modifiers: [])
+    #expect(plain.keyCode == 51)
+    #expect(plain.eventFlags.isEmpty)
+
+    let modified = TargetKeyStroke(keyCode: 0, modifiers: [.shift, .option])
+    #expect(modified.keyCode == 0)
+    #expect(modified.eventFlags.contains(.maskShift))
+    #expect(modified.eventFlags.contains(.maskAlternate))
 }
 
 // MARK: - Ribbon keyboard model
@@ -1148,13 +1231,20 @@ func ribbonEscapeBacksOutOfTheRunFirst() {
 func ribbonFocusCycles() {
     let model = PanelModel()
     model.reset(hasSelection: true, charCount: 12)
-    #expect(model.focusedCell == .none)
+    #expect(model.focusedCell == .smartEdit)
+    #expect(model.focusableCells == [.oops, .snippets, .smartEdit])
+
+    model.moveFocus(.next)
+    #expect(model.focusedCell == .oops)
+
+    model.moveFocus(.previous)
+    #expect(model.focusedCell == .smartEdit)
+
+    model.showSmartEdit()
+    #expect(model.focusedCell == .action(0))
     #expect(model.focusableCells == [
         .action(0), .action(1), .action(2), .action(3), .action(4),
     ])
-
-    model.moveFocus(.next)
-    #expect(model.focusedCell == .action(0))
 
     model.moveFocus(.previous)
     #expect(model.focusedCell == .action(4))
@@ -1173,16 +1263,17 @@ func ribbonFocusCycles() {
 func ribbonFocusIgnoresSelectionCapture() {
     let model = PanelModel()
     model.reset(hasSelection: false, charCount: 0)
-    #expect(model.focusableCells == [
-        .action(0), .action(1), .action(2), .action(3), .action(4),
-    ])
+    #expect(model.focusableCells == [.oops, .snippets, .smartEdit])
 
     model.moveFocus(.next)
-    #expect(model.focusedCell == .action(0))
+    #expect(model.focusedCell == .oops)
 
-    // Capturing hides the menu the same way, so the cell drops out too.
+    // Capture state does not alter the visible main-menu controls.
     model.reset(hasSelection: true, charCount: 8)
     model.capturing = true
+    #expect(model.focusableCells == [.oops, .snippets, .smartEdit])
+
+    model.showSmartEdit()
     #expect(model.focusableCells == [
         .action(0), .action(1), .action(2), .action(3), .action(4),
     ])
@@ -1191,6 +1282,31 @@ func ribbonFocusIgnoresSelectionCapture() {
     #expect(model.focusableCells == [
         .action(0), .action(1), .action(2), .action(3), .direction, .run,
     ])
+}
+
+@MainActor
+@Test("Numbered shortcuts follow the visible ribbon menu")
+func ribbonNumberedShortcutsFollowVisibleMenu() {
+    let model = PanelModel()
+    let snippet = TextSnippet(title: "Office", value: "246810")
+    model.snippets = [snippet]
+    var oopsRuns = 0
+    var pastedSnippet: TextSnippet?
+    model.onOops = { oopsRuns += 1 }
+    model.onSnippet = { pastedSnippet = $0 }
+
+    model.activateNumberedButton(at: 0)
+    #expect(oopsRuns == 1)
+
+    model.activateNumberedButton(at: 1)
+    #expect(model.snippetsExpanded)
+    model.activateNumberedButton(at: 0)
+    #expect(pastedSnippet == snippet)
+
+    model.reset(hasSelection: true, charCount: 12)
+    model.activateNumberedButton(at: 2)
+    #expect(model.smartEditExpanded)
+    #expect(model.focusedCell == .action(0))
 }
 
 @MainActor
@@ -1312,7 +1428,7 @@ func ribbonTargetShortcutWaitsForCapture() {
 }
 
 @MainActor
-@Test("A fresh session starts without focusing an action")
+@Test("A fresh session starts on Smart Edit in the main menu")
 func ribbonResetClearsFocus() {
     let model = PanelModel()
     model.focusedCell = .direction
@@ -1320,7 +1436,7 @@ func ribbonResetClearsFocus() {
 
     model.reset(hasSelection: true, charCount: 30)
 
-    #expect(model.focusedCell == .none)
+    #expect(model.focusedCell == .smartEdit)
     #expect(
         model.sessionSeq == before &+ 1,
         "the lane's hosting view outlives a session, so the bump clears stale focus")
@@ -1448,6 +1564,22 @@ func nonceAvoidsGuidanceCollision() {
     #expect(!"body".contains(nonce))
 }
 
+@Test("Oops converts English-layout keystrokes to Hebrew and selects Hebrew")
+func keyboardLayoutConversionToHebrew() {
+    let conversion = KeyboardLayoutConverter.conversion(of: "akuo")
+
+    #expect(conversion.text == "שלום")
+    #expect(conversion.language == .hebrew)
+}
+
+@Test("Oops converts Hebrew-layout keystrokes to English and selects English")
+func keyboardLayoutConversionToEnglish() {
+    let conversion = KeyboardLayoutConverter.conversion(of: "שלום")
+
+    #expect(conversion.text == "akuo")
+    #expect(conversion.language == .english)
+}
+
 @Test("The action strip exposes all four built-ins in shortcut order")
 func presetListShape() {
     #expect(PanelPreset.all == [.improve, .sharpen, .planFirst, .tighten])
@@ -1458,6 +1590,99 @@ func presetListShape() {
     #expect(PanelPreset.tighten.action == .tighten)
     #expect(PanelPreset.all.count == Set(PanelPreset.all.map(\.id)).count, "preset ids must be unique")
     #expect(PanelPreset.all.allSatisfy { !$0.action.isCustom }, "presets are named templates, never free-form")
+}
+
+@Test("Prompt YAML controls button order, display, visibility, and Markdown content")
+func promptStoreLoadsManifest() throws {
+    let fileManager = FileManager.default
+    let directory = fileManager.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? fileManager.removeItem(at: directory) }
+    try "Make this concise.".write(
+        to: directory.appendingPathComponent("concise.md"), atomically: true, encoding: .utf8)
+    try "Do not load this.".write(
+        to: directory.appendingPathComponent("hidden.md"), atomically: true, encoding: .utf8)
+    try "Fix grammar only.".write(
+        to: directory.appendingPathComponent("proofread.md"), atomically: true, encoding: .utf8)
+
+    let yaml = """
+    prompts:
+      - file: proofread.md
+        title: Proofread
+        symbol: text.badge.checkmark
+        progress: Proofreading
+        enabled: true
+      - file: hidden.md
+        title: Hidden
+        symbol: eye.slash
+        progress: Hiding
+        enabled: false
+      - file: concise.md
+        title: Concise
+        symbol: arrow.down.right.and.arrow.up.left
+        progress: Tightening
+        enabled: true
+    """
+
+    let presets = try PromptStore.load(yaml: yaml, from: directory)
+
+    #expect(presets.map(\.id) == ["proofread", "concise"])
+    #expect(presets.map(\.title) == ["Proofread", "Concise"])
+    #expect(presets.map(\.symbol) == [
+        "text.badge.checkmark", "arrow.down.right.and.arrow.up.left",
+    ])
+    #expect(presets.map(\.progressLabel) == ["Proofreading", "Tightening"])
+    #expect(presets.map(\.action) == [
+        .prompt(instruction: "Fix grammar only.", progressLabel: "Proofreading"),
+        .prompt(instruction: "Make this concise.", progressLabel: "Tightening"),
+    ])
+}
+
+@MainActor
+@Test("Panel routes dynamically loaded Smart Edit buttons in manifest order")
+func dynamicPromptButtonsRouteLoadedActions() {
+    let first = PanelPreset(
+        id: "first", title: "First",
+        action: .prompt(instruction: "First prompt", progressLabel: "First pass"),
+        symbol: "1.circle", progressLabel: "First pass")
+    let second = PanelPreset(
+        id: "second", title: "Second",
+        action: .prompt(instruction: "Second prompt", progressLabel: "Second pass"),
+        symbol: "2.circle", progressLabel: "Second pass")
+    let model = PanelModel()
+    model.setPresets([second, first])
+    var calls: [EditAction] = []
+    model.onPerform = { action, _ in calls.append(action) }
+
+    #expect(model.actionDisplayOrder == [0, 1, 2])
+    #expect(model.actionTitle(at: 0) == "Second")
+    #expect(model.actionSymbol(at: 1) == "1.circle")
+    #expect(model.actionProgressLabel(at: 1) == "First pass")
+
+    model.activateAction(at: 1)
+    #expect(calls == [.prompt(instruction: "First prompt", progressLabel: "First pass")])
+    #expect(model.dynamicCustomActionIndex == 2)
+}
+
+@Test("Smart Edit width grows with loaded prompt buttons")
+func smartEditWidthTracksPromptCatalog() {
+    let one = [PanelPreset.improve]
+    let three = [PanelPreset.improve, .sharpen, .tighten]
+
+    #expect(RibbonPlacement.smartEditWidth(presets: three, customExpanded: false)
+        > RibbonPlacement.smartEditWidth(presets: one, customExpanded: false))
+    #expect(RibbonPlacement.smartEditWidth(presets: one, customExpanded: true)
+        > RibbonPlacement.smartEditWidth(presets: one, customExpanded: false))
+}
+
+@Test("Smart Edit action width matches its rendered button chrome")
+func smartEditActionWidthMatchesButton() {
+    let font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+    let longestText = ceil(("Improving" as NSString).size(withAttributes: [.font: font]).width)
+
+    #expect(RibbonPlacement.smartEditActionWidth(
+        title: "Improve", progress: "Improving") == longestText + 44)
 }
 
 @MainActor
@@ -1727,7 +1952,8 @@ func resetRestoresDefaultAction() {
     #expect(model.actionChoice == .preset(.improve))
     #expect(model.resolvedActionTitle == "Improve")
     #expect(!model.isCustomInstructionSelected)
-    #expect(model.focusedCell == .none)
+    #expect(!model.smartEditExpanded)
+    #expect(model.focusedCell == .smartEdit)
 }
 
 // MARK: - Ribbon placement
@@ -1736,6 +1962,69 @@ func resetRestoresDefaultAction() {
 /// top and a 60pt Dock at the bottom — the ordinary windowed case.
 private let ribbonScreen = CGRect(x: 0, y: 0, width: 1440, height: 900)
 private let ribbonVisible = CGRect(x: 0, y: 60, width: 1440, height: 815)
+
+@Test("Placement centers below the captured pointer")
+func placementFollowsCapturedPointer() {
+    let pointer = CGPoint(x: 720, y: 500)
+    let resolved = RibbonPlacement.resolve(
+        height: 56,
+        in: .init(
+            screenFrame: ribbonScreen,
+            visibleFrame: ribbonVisible,
+            pointerLocation: pointer,
+            preferredWidth: RibbonPlacement.compactWidth,
+            minimumContentWidth: RibbonPlacement.compactWidth))
+
+    #expect(resolved.anchor == .belowPointer)
+    #expect(resolved.frame.midX == pointer.x)
+    #expect(resolved.frame.maxY == pointer.y - RibbonPlacement.pointerClearance)
+}
+
+@Test("Placement opens above a pointer near the display floor")
+func placementOpensAboveLowPointer() {
+    let pointer = CGPoint(x: 720, y: ribbonVisible.minY + 20)
+    let resolved = RibbonPlacement.resolve(
+        height: 56,
+        in: .init(
+            screenFrame: ribbonScreen,
+            visibleFrame: ribbonVisible,
+            pointerLocation: pointer,
+            preferredWidth: RibbonPlacement.compactWidth,
+            minimumContentWidth: RibbonPlacement.compactWidth))
+
+    #expect(resolved.anchor == .abovePointer)
+    #expect(resolved.frame.minY == pointer.y + RibbonPlacement.pointerClearance)
+}
+
+@Test("Pointer-relative placement clamps at display edges")
+func placementNearPointerClampsAtScreenEdges() {
+    let resolved = RibbonPlacement.resolve(
+        height: 56,
+        in: .init(
+            screenFrame: ribbonScreen,
+            visibleFrame: ribbonVisible,
+            pointerLocation: CGPoint(x: ribbonScreen.maxX - 5, y: 500),
+            preferredWidth: RibbonPlacement.compactWidth,
+            minimumContentWidth: RibbonPlacement.compactWidth))
+
+    #expect(resolved.frame.maxX == ribbonScreen.maxX)
+}
+
+@MainActor
+@Test("The pointer display wins over selection and host displays")
+func targetScreenFollowsPointerAcrossDisplays() {
+    let displays = [
+        CGRect(x: 0, y: 0, width: 1440, height: 900),
+        CGRect(x: -1920, y: 0, width: 1920, height: 1080),
+    ]
+    let index = RibbonWindow.targetScreenIndex(
+        pointerLocation: CGPoint(x: -800, y: 500),
+        selectionRect: CGRect(x: 200, y: 300, width: 400, height: 20),
+        hostWindowFrame: CGRect(x: 100, y: 100, width: 1000, height: 700),
+        screenFrames: displays)
+
+    #expect(index == 1)
+}
 
 @Test("Placement honors standard and expanded preferred widths")
 func placementHonorsPreferredWidth() {

@@ -16,17 +16,28 @@ enum PanelKeyCommand: Equatable {
     case openSettings
     /// ⌘⏎ — run the primary action, same as Return.
     case submit
-    /// ⌘1…⌘5 — activate the matching visible action button. The first four run
-    /// immediately; the fifth selects Custom and focuses its field.
+    /// ⌘1…⌘9 — activate the matching visible action button.
     case activateAction(Int)
     /// ⌘T — swap the target between the selection and the whole document.
     ///
-    /// The digits it used to share with the presets are worth more to them:
-    /// there are four presets and picking one is the common move, whereas the
+    /// The digits it used to share with the prompts are worth more to them:
+    /// picking a prompt is the common move, whereas the
     /// target is usually right already — the session opens aimed at whatever
     /// the user had selected. A two-state control is served just as well by one
     /// key, and `T` survives keyboard layouts that a shifted digit would not.
     case toggleTarget
+
+    var targetEditCommand: TargetEditCommand? {
+        switch self {
+        case .selectAll: .selectAll
+        case .copy: .copy
+        case .paste: .paste
+        case .cut: .cut
+        case .undo: .undo
+        case .redo: .redo
+        default: nil
+        }
+    }
 
     /// Pure mapping from a key event's characters + modifiers, kept separate
     /// from NSEvent so it is unit-testable.
@@ -49,6 +60,10 @@ enum PanelKeyCommand: Equatable {
         case ("3", [.command]): return .activateAction(2)
         case ("4", [.command]): return .activateAction(3)
         case ("5", [.command]): return .activateAction(4)
+        case ("6", [.command]): return .activateAction(5)
+        case ("7", [.command]): return .activateAction(6)
+        case ("8", [.command]): return .activateAction(7)
+        case ("9", [.command]): return .activateAction(8)
         default: return nil
         }
     }

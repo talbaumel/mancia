@@ -1,0 +1,1 @@
+Rewrite the text as the shortest version that preserves every requirement, constraint, filename, path, command, identifier, number, and acceptance criterion. Cut filler, hedging, repetition, and politeness. Do not weaken requirements or add information. Return only the resulting text.

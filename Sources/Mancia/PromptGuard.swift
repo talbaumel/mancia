@@ -67,6 +67,8 @@ enum PromptGuard {
     static func validate(action: EditAction, text: String, note: String? = nil) throws {
         if case .custom(let request) = action {
             try validateInstruction(request)
+        } else if case .prompt(let instruction, _) = action {
+            try validateInstruction(instruction)
         } else if let note, !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             try validateInstruction(note)
         }

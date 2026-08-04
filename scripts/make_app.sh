@@ -24,6 +24,7 @@ mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources"
 cp "$BIN_PATH" "$BUNDLE/Contents/MacOS/$BIN_NAME"
 cp "$ROOT/Support/Info.plist" "$BUNDLE/Contents/Info.plist"
 cp -R "$ROOT/Support/Resources/." "$BUNDLE/Contents/Resources/"
+cp -R "$ROOT/Sources/Mancia/prompts" "$BUNDLE/Contents/Resources/prompts"
 cp "$ROOT/docs/assets/mancia-logo.png" "$BUNDLE/Contents/Resources/mancia-logo.png"
 printf 'APPL????' > "$BUNDLE/Contents/PkgInfo"
 

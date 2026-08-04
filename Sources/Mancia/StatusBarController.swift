@@ -34,6 +34,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         statusItem.menu = menu
     }
 
+    func setIconVisible(_ visible: Bool) {
+        statusItem.isVisible = visible
+    }
+
     private func buildMenu() {
         let edit = NSMenuItem(
             title: "Edit Selection…", action: #selector(triggerEdit), keyEquivalent: "e")

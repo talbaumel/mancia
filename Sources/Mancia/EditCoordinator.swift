@@ -14,9 +14,11 @@ final class EditCoordinator {
     /// re-opening a session doesn't tear down and re-create a window
     /// mid-animation.
     private lazy var ribbon: RibbonWindow = {
-        let ribbon = RibbonWindow(model: model)
+        let ribbon = RibbonWindow(model: model, settings: settings)
         ribbon.onKeyDown = { [weak self] event in self?.handleKeyDown(event) ?? false }
+        ribbon.onUnhandledKey = { [weak self] event in self?.forwardKeyAndClose(event) }
         ribbon.onOpenSettings = { [weak self] in self?.onOpenSettings?() }
+        ribbon.onEditTarget = { [weak self] command in self?.performTargetEdit(command) }
         return ribbon
     }()
 
@@ -27,6 +29,10 @@ final class EditCoordinator {
     private var capturing = false
     private var pendingAction: EditAction?
     private var pendingNote: String?
+    private var pendingTargetEdits: [TargetEditCommand] = []
+    private var pendingKeyAndClose: TargetKeyStroke?
+    private var pendingOops = false
+    private var pendingSnippet: TextSnippet?
     /// The post-apply auto-close beat (hybrid behavior). Cancelled on any panel
     /// key press so the user can keep editing.
     private var autoCloseTask: Task<Void, Never>?
@@ -43,6 +49,7 @@ final class EditCoordinator {
     /// A completed whole-document result awaiting explicit confirmation before
     /// it overwrites the document (`.confirm` phase).
     private var pendingApply: (output: String, baseline: String)?
+    private var pendingInputLanguage: KeyboardLayoutConverter.Language?
     /// Wired by AppDelegate; invoked by the ribbon's ⌘, shortcut.
     var onOpenSettings: (() -> Void)?
 
@@ -54,6 +61,8 @@ final class EditCoordinator {
 
     private func wire() {
         model.onPerform = { [weak self] action, note in self?.perform(action, note: note) }
+        model.onOops = { [weak self] in self?.performOops() }
+        model.onSnippet = { [weak self] snippet in self?.performSnippet(snippet) }
         model.onUndoVersion = { [weak self] in self?.undoLastVersion() ?? false }
         model.onRetry = { [weak self] in self?.retry() }
         model.onConfirmApply = { [weak self] in self?.confirmApply() }
@@ -77,7 +86,12 @@ final class EditCoordinator {
         autoCloseTask = nil
         pendingAction = nil
         pendingNote = nil
+        pendingTargetEdits = []
+        pendingKeyAndClose = nil
+        pendingOops = false
+        pendingSnippet = nil
         pendingApply = nil
+        pendingInputLanguage = nil
         capture = nil
         session.begin(capturedText: nil, targetPid: nil)
         navigating = false
@@ -85,6 +99,8 @@ final class EditCoordinator {
         // Optimistically assume a selection until capture proves otherwise;
         // the status line reads "Reading selection…" until it resolves.
         model.reset(hasSelection: true, charCount: 0)
+        reloadSnippets()
+        reloadPrompts()
         model.capturing = true
         ribbon.show()
         ribbon.focus()
@@ -93,6 +109,14 @@ final class EditCoordinator {
             let result = await SelectionCapture.captureSelection()
             if Task.isCancelled { return }
             self.capture = result
+            if let keystroke = pendingKeyAndClose {
+                pendingKeyAndClose = nil
+                capturing = false
+                SelectionCapture.perform(keystroke, in: result)
+                currentTask = nil
+                warmProviderAfterClose()
+                return
+            }
             session.begin(
                 capturedText: result.text,
                 targetPid: result.targetApp?.processIdentifier)
@@ -102,7 +126,18 @@ final class EditCoordinator {
             model.hasSelection = hasSelection
             model.selectionCharCount = result.text?.count ?? 0
             model.scope = hasSelection ? .selection : .document
-            if let pending = pendingAction {
+            if !pendingTargetEdits.isEmpty {
+                let edits = pendingTargetEdits
+                pendingTargetEdits = []
+                for edit in edits { SelectionCapture.perform(edit, in: result) }
+            }
+            if let snippet = pendingSnippet {
+                pendingSnippet = nil
+                performSnippet(snippet)
+            } else if pendingOops {
+                pendingOops = false
+                performOops()
+            } else if let pending = pendingAction {
                 let note = pendingNote
                 pendingAction = nil
                 pendingNote = nil
@@ -117,6 +152,8 @@ final class EditCoordinator {
         // Fired before the background capture finished: queue it and show the
         // spinner; it runs the moment the selection is ready.
         if capturing {
+            pendingOops = false
+            pendingSnippet = nil
             pendingAction = action
             pendingNote = note
             model.runningTitle = action.progressLabel
@@ -174,6 +211,136 @@ final class EditCoordinator {
                 fail(error.localizedDescription)
             }
         }
+    }
+
+    private func performOops() {
+        ribbon.close()
+        if capturing {
+            pendingAction = nil
+            pendingNote = nil
+            pendingSnippet = nil
+            pendingOops = true
+            model.runningTitle = "Fixing keyboard layout"
+            model.phase = .running
+            return
+        }
+        currentTask?.cancel()
+        autoCloseTask?.cancel()
+        autoCloseTask = nil
+        currentTask = Task {
+            model.runningTitle = "Fixing keyboard layout"
+            model.phase = .running
+            guard let resolved = await resolveInput() else {
+                if !Task.isCancelled {
+                    ribbon.show()
+                    fail("There is no text to edit.")
+                }
+                return
+            }
+            guard !Task.isCancelled, let capture else { return }
+            let conversion = KeyboardLayoutConverter.conversion(of: resolved.text)
+            let output = conversion.text
+            if ApplyConfirmation.isRequired(
+                isWholeDocument: resolved.strategy == .entireDocument,
+                userOptedIn: settings.confirmWholeDocumentReplace
+            ) {
+                pendingInputLanguage = conversion.language
+                ribbon.show()
+                presentConfirmation(output: output, baseline: resolved.text)
+                return
+            }
+            await applyResolved(output: output, strategy: resolved.strategy, capture: capture)
+            guard !Task.isCancelled else { return }
+            KeyboardInputSource.select(language: conversion.language)
+            finishLocalAction()
+        }
+    }
+
+    private func performSnippet(_ snippet: TextSnippet) {
+        ribbon.close()
+        if capturing {
+            pendingAction = nil
+            pendingNote = nil
+            pendingOops = false
+            pendingSnippet = snippet
+            model.runningTitle = "Pasting snippet"
+            model.phase = .running
+            return
+        }
+        currentTask?.cancel()
+        autoCloseTask?.cancel()
+        autoCloseTask = nil
+        currentTask = Task {
+            guard let capture else {
+                ribbon.show()
+                fail("There is nowhere to paste the snippet.")
+                return
+            }
+            await SelectionCapture.apply(text: snippet.value, to: capture, entireDocument: false)
+            guard !Task.isCancelled else { return }
+            finishLocalAction()
+        }
+    }
+
+    private func finishLocalAction() {
+        currentTask = nil
+        model.phase = .idle
+        sessionActive = false
+        warmProviderAfterClose()
+    }
+
+    private func reloadSnippets() {
+        do {
+            model.snippets = try SnippetStore.loadOrCreate()
+            model.snippetError = nil
+        } catch {
+            model.snippets = []
+            model.snippetError = error.localizedDescription
+        }
+    }
+
+    private func reloadPrompts() {
+        do {
+            model.setPresets(try PromptStore.loadOrCreate())
+            model.promptError = nil
+        } catch {
+            model.setPresets(PanelPreset.all)
+            model.promptError = error.localizedDescription
+        }
+    }
+
+    private func performTargetEdit(_ command: TargetEditCommand) {
+        guard let capture else {
+            if capturing { pendingTargetEdits.append(command) }
+            return
+        }
+        SelectionCapture.perform(command, in: capture)
+    }
+
+    private func forwardKeyAndClose(_ event: NSEvent) {
+        let keystroke = TargetKeyStroke(keyCode: event.keyCode, modifiers: event.modifierFlags)
+        if let capture {
+            SelectionCapture.perform(keystroke, in: capture)
+            cancel()
+            return
+        }
+        guard capturing else {
+            cancel()
+            return
+        }
+        pendingAction = nil
+        pendingNote = nil
+        pendingTargetEdits = []
+        pendingOops = false
+        pendingSnippet = nil
+        pendingKeyAndClose = keystroke
+        autoCloseTask?.cancel()
+        autoCloseTask = nil
+        pendingApply = nil
+        pendingInputLanguage = nil
+        model.pendingResultPreview = ""
+        sessionActive = false
+        ribbon.close()
     }
 
     /// Perform the actual text replacement for a resolved strategy.
@@ -236,6 +403,10 @@ final class EditCoordinator {
         currentTask = Task {
             await SelectionCapture.apply(text: pending.output, to: capture, entireDocument: true)
             if Task.isCancelled { return }
+            if let language = pendingInputLanguage {
+                KeyboardInputSource.select(language: language)
+                pendingInputLanguage = nil
+            }
             dodgeAppliedText()
             recordApplied(output: pending.output, baseline: pending.baseline)
         }
@@ -373,6 +544,7 @@ final class EditCoordinator {
         autoCloseTask = nil
         // Discard any result awaiting confirmation and return to a resting state.
         pendingApply = nil
+        pendingInputLanguage = nil
         model.pendingResultPreview = ""
         model.phase = session.versionCount > 1 ? .applied : .idle
         ribbon.focus()
@@ -391,6 +563,7 @@ final class EditCoordinator {
         autoCloseTask?.cancel()
         autoCloseTask = nil
         pendingApply = nil
+        pendingInputLanguage = nil
         // The review gate's preview is the whole generated document. Esc is a
         // decision like any other, so it discards the text on the same beat
         // confirming or declining does — not at the next session's `reset`.

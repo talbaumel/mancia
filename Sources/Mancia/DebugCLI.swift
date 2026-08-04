@@ -251,8 +251,16 @@ enum DebugCLI {
         await settle()
 
         let y: CGFloat = 12
-        let emptyTrailingLane = NSPoint(x: width - 60, y: y)
         var failures: [String] = []
+        let smartEditCenter = NSPoint(x: 377, y: y)
+        click(panel, at: smartEditCenter)
+        await settle()
+        print("click (Smart Edit): \(model.smartEditExpanded ? "opened" : "did NOTHING")")
+        if !model.smartEditExpanded {
+            failures.append("click (Smart Edit): expected the action strip to open")
+        }
+
+        let emptyTrailingLane = NSPoint(x: width - 60, y: y)
         if isAccent(hosting, at: emptyTrailingLane) {
             failures.append("unexpected default accent control in the trailing lane")
         }

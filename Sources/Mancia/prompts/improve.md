@@ -1,0 +1,1 @@
+Improve the wording, grammar, and clarity of the text so it reads better and more naturally. Preserve its meaning, factual details, intent, tone, language, and formatting. Fix spelling, grammar, punctuation, and awkward phrasing. Do not add or remove information. Return only the resulting text.

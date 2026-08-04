@@ -1,0 +1,1 @@
+Restructure the text into a clear, action-oriented instruction for an AI coding agent. State the goal first in direct imperative voice. Make constraints and success criteria explicit. Preserve every filename, path, command, identifier, number, and error message. Do not add or remove requirements. Return only the resulting text.

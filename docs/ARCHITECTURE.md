@@ -12,8 +12,11 @@ Sources/Mancia/
 ├── main.swift                    NSApplication bootstrap; routes to DebugCLI
 │                                 before any UI is created (LSUIElement, no Dock icon)
 ├── AppDelegate.swift             Wires status item, hotkey, coordinator, settings window
-├── StatusBarController.swift     NSStatusItem + menu (Edit / Provider status / Settings /
-│                                 About / Quit)
+├── StatusBarController.swift     NSStatusItem + menu, icon visibility, provider status,
+│                                 Settings / About / Quit
+├── StartupMenuView.swift         Regular command window shown on an app reopen request
+├── PromptStore.swift             User-editable Smart Edit Markdown + YAML catalog
+├── prompts/                      Defaults copied to ~/Documents/Mancia/prompts
 ├── HotkeyManager.swift           Registers the global hotkey (KeyboardShortcuts pkg)
 ├── Permissions.swift             AXIsProcessTrusted() checks + System Settings deep link
 ├── SelectionCapture.swift        Pasteboard snapshot/capture/replace via synthetic ⌘C/⌘A/⌘V,
@@ -46,8 +49,8 @@ Sources/Mancia/
 │   │                             host's title bar
 │   ├── HostWindowProbe.swift     Reads the frontmost window's frame and full-screen state
 │   │                             through Accessibility (placement's second input)
-│   ├── RibbonView.swift          The lane: Target / five Actions / Run, moving Custom
-│   │                             left and disclosing Direction when selected
+│   ├── RibbonView.swift          The lane: Oops / Snippets / Smart Edit at entry;
+│   │                             Smart Edit reveals file-backed prompts and Custom direction
 │   ├── RibbonReviewView.swift    The whole-document review gate
 │   ├── RibbonControls.swift      Controls shared across the lane's registers
 │   └── RibbonPalette.swift       The lane's dark-register color tokens
@@ -61,7 +64,8 @@ Sources/Mancia/
 │                                 (SQLite, read-only) and merges it with the live
 │                                 ACP listing for the settings pickers
 └── Settings/
-    ├── AppSettings.swift         @Observable, UserDefaults-backed settings + launch-at-login
+    ├── AppSettings.swift         @Observable, UserDefaults-backed settings, laser color
+    │                             codec, and launch-at-login
     ├── SettingsView.swift        SwiftUI settings window content
     ├── ReadinessRow.swift        One "is this ready?" row (hotkey / Accessibility / provider)
     └── ShortcutRecorderView.swift  Native hotkey recorder (see note below)
@@ -77,6 +81,11 @@ scripts/make_app.sh                  swift build -c release → build/Mancia.app
 
 There is no `Resources/` asset catalog — the menu bar icon is the SF Symbol
 `hand.point.up.left.fill`, set directly on the status item's `NSStatusBarButton`.
+The first launch remains background-only. Asking macOS to open Mancia again
+while it is already running invokes `applicationShouldHandleReopen` and shows a
+regular command window with Edit Selection, readiness, Settings, About, and
+Quit. This also provides a route back to Settings when **Hide menu bar icon**
+is enabled.
 
 ## Core flow
 
@@ -140,14 +149,17 @@ wired to call `coordinator.start()`.
    a selection: with nothing selected the target is the whole document and
    there is no line to sit against.
 
-   Vertical *and* horizontal position follow the selection: the lane is
-   centered on the selected span, and the room at its ends and flanks is
+  Vertical *and* horizontal position first follow the invocation pointer,
+  captured once so later resizes do not chase the mouse. When that pointer is
+  not on the target display, the lane centers on the selected span, and the
+  room at its ends and flanks is
    measured against the **display's band**, never the host window. The lane
    floats over its host rather than inside it, so a window much wider than the
    sentence is no reason to put the lane half a screen from it, and a window
    shorter than the room below the words is no reason to send the lane over
-   them. The lane's **width is imposed by placement**: buttons-only states ask
-   for the stable 600pt standard width and Custom asks for up to 900pt, then an
+  them. The lane's **width is imposed by placement**: the main menu and snippets
+  ask only for their compact content width, Smart Edit's buttons ask for the
+  stable standard width, and Custom asks for up to 900pt, then an
    end anchor bounds that request by the selected span, a margin anchor by its
    available flank, and a resting anchor by the window or screen. Every result
    stays between `minimumWidth` and `maximumWidth`. Only the lane's **height
@@ -157,11 +169,18 @@ wired to call `coordinator.start()`.
    through Accessibility; every failure path returns `nil` and placement
    degrades to the screen rather than failing the session.
 
-   The lane is a cyclical **edit session**. Target, five tight Action buttons and
-   Run sit on a **single row**, dimmed and disabled while a request runs.
+  The lane opens on a compact **main menu**: Oops, Snippets, and Smart Edit.
+  Oops and Snippets stay local and immediate; after Oops replaces mistyped
+  English/Hebrew-layout text, it selects the matching enabled macOS input
+  source so continued typing uses the converted language. Smart Edit reveals
+  the cyclical edit session. Its prompt buttons sit on a **single row**, dimmed
+  and disabled while a request runs.
    Selecting Custom moves it to the leading edge, inserts Direction after it,
    and expands the whole lane horizontally. Hovering an action replaces its
-   title with its ⌘1…⌘5 shortcut without changing the button's size. Each
+  title with its available ⌘1…⌘9 shortcut without changing the button's size. Each
+  running action uses the persisted Smart Edit laser color from `AppSettings`
+  for its animated `SwooshBorder`; Settings exposes a native color picker and
+  default reset. Each
    control names itself rather than carrying a caption above it. Running and
    applied status replace the text **inside Run**, while iteration history stays
    beside it. When disclosed, Direction
@@ -183,8 +202,8 @@ wired to call `coordinator.start()`.
    stop the keyboard is on. Every action button is a stop; Direction joins the
    ring immediately after Custom only while the field is disclosed.
 
-   ⌘1…⌘4 immediately run Improve, Sharpen, Plan first, and Tighten; ⌘5 moves
-   Custom left, discloses its field, and focuses it without running. ⌘T swaps the target. These
+  ⌘1…⌘9 activate controls in the order declared by `prompts.yaml`; Custom
+  follows the loaded prompts and discloses its field without running. ⌘T swaps the target. These
    commands are resolved by `PanelKeyCommand` and dispatched through
    `KeyablePanel`. Because
    that happens above the SwiftUI tree, the `disabled` that greys the cells out
@@ -257,6 +276,9 @@ wired to call `coordinator.start()`.
 Esc anywhere in the lane routes through `KeyablePanel.cancelOperation` →
 `panel.onEscape` → `model.escape()`, which picks `onCancelRun` while the phase
 is `.running` and `onCancel` otherwise. ⌘W keeps the unconditional close.
+Mouse clicks outside the ribbon also close the session. Once keyboard input
+returns to another app, numbered ribbon shortcuts remain active; any unrelated
+key closes the ribbon instead of leaving a stale command surface on screen.
 
 ## The `LLMProvider` protocol
 
