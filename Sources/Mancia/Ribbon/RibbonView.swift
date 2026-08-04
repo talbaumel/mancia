@@ -8,7 +8,7 @@ import SwiftUI
 /// menu bar, or under the frontmost window's title bar. See `RibbonPlacement`.
 ///
 /// The lane opens with Oops and a Smart Edit disclosure. Smart Edit expands the
-/// row into one sentence: **Target · Action · Direction · Run**. Those cells
+/// row into one sentence: **Action · Direction · Run**. Those cells
 /// carry no captions, and the resolved action is spelled out in the Action chip
 /// itself so an empty Direction meaning Improve is never implicit.
 ///
@@ -50,7 +50,6 @@ struct RibbonView: View {
     /// Room for the widest thing each menu can say — "Selection · 12345" and
     /// "Your instruction" — so neither cell resizes as its value changes and
     /// drags the rest of the row sideways.
-    private let targetMinWidth: CGFloat = 132
     private let actionMinWidth: CGFloat = 158
 
     var body: some View {
@@ -121,7 +120,6 @@ struct RibbonView: View {
         HStack(alignment: .top, spacing: 8) {
             Group {
                 if model.smartEditExpanded {
-                    targetCell
                     actionCell
                     directionCell
                 } else if model.snippetsExpanded {
@@ -136,11 +134,6 @@ struct RibbonView: View {
             .disabled(locked)
 
             if model.smartEditExpanded {
-                // The field stops at its cap and this takes the rest. The slack
-                // is what the version counter and status word grow into when a
-                // run starts. Keeping it out of the compact state lets Smart
-                // Edit use its full intrinsic width instead of wrapping.
-                Spacer(minLength: 0)
                 trailingCluster
             }
         }
@@ -251,84 +244,6 @@ struct RibbonView: View {
         }
     }
 
-    /// What the edit will touch. A menu while there is a selection to choose
-    /// between; a static chip when the whole document is the only option.
-    ///
-    /// The chip is terse — an icon, one word and the character count — because
-    /// it is the least interesting cell on a lane the user came to type in. The
-    /// menu it opens keeps the unabbreviated wording, where there is room for
-    /// it and the choice has to be unambiguous.
-    @ViewBuilder
-    private var targetCell: some View {
-        if model.capturing {
-            chip {
-                chipLabel("ellipsis", "Reading…", chevron: false, minWidth: targetMinWidth)
-            }
-            .accessibilityLabel("Target, reading selection")
-            .accessibilityIdentifier("Target")
-        } else if model.hasSelection {
-            Menu {
-                Button("Selection · \(model.selectionCharCount)") {
-                    model.setScope(.selection)
-                    model.returnFocusToDirection()
-                }
-                Button("Entire document") {
-                    model.setScope(.document)
-                    model.returnFocusToDirection()
-                }
-                Divider()
-                // A hint, not a binding. `KeyablePanel` resolves ⌘T above the
-                // SwiftUI tree and consumes it, so this item never fires; it is
-                // here because the menu is where someone looks for the key.
-                Text("⌘T switches")
-            } label: {
-                targetLabel
-            }
-            .menuStyle(.button)
-            .buttonStyle(.plain)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            // The fill hangs off the menu, not off its label: a `Text` wrapped
-            // in a background is rendered as an image, and an image-backed
-            // control has no accessible name left to override.
-            .background(controlShape.fill(RibbonPalette.control))
-            .focusable()
-            .focused($focus, equals: .target)
-            .ribbonFocusRing(model.focusedCell == .target, radius: 8, inset: 0)
-            .accessibilityLabel("Target")
-            .accessibilityValue(targetSpokenValue)
-            .accessibilityIdentifier("Scope")
-        } else {
-            chip {
-                chipLabel("doc.text", "Document", chevron: false, minWidth: targetMinWidth)
-            }
-            .accessibilityLabel("Target")
-            .accessibilityValue("Entire document")
-            .accessibilityIdentifier("Target")
-        }
-    }
-
-    @ViewBuilder
-    private var targetLabel: some View {
-        switch model.scope {
-        case .selection:
-            chipLabel(
-                "selection.pin.in.out", "Selection", detail: "\(model.selectionCharCount)",
-                minWidth: targetMinWidth)
-        case .document:
-            chipLabel("doc.text", "Document", minWidth: targetMinWidth)
-        }
-    }
-
-    /// VoiceOver hears the count and the unabbreviated noun; the chip shows the
-    /// short form.
-    private var targetSpokenValue: String {
-        switch model.scope {
-        case .selection: return "Selection, \(model.selectionCharCount) characters"
-        case .document: return "Entire document"
-        }
-    }
-
     /// ⌘1…⌘4, and nothing past the fourth preset — a catalog longer than that
     /// has outgrown a digit row, and an unlabeled fifth key is worse than none.
     /// `\0` is `KeyEquivalent`'s way of asking for no shortcut at all.
@@ -379,12 +294,8 @@ struct RibbonView: View {
     ///
     /// It is the one cell that takes the lane's slack, and the only one that
     /// grows: past a line it wraps and pushes the lane downward, to four lines
-    /// and then a scroller. The cap is roughly the 70-character measure that
-    /// reads comfortably — past that the field was simply absorbing the lane,
-    /// which is what made it look like the most important thing on a surface
-    /// where it is optional. A caption above it would have been a third name
-    /// for a control that already carries a prompt inside it and lights its
-    /// border when it has focus.
+    /// and then a scroller. Horizontally it fills the row up to Run so the two
+    /// controls keep the row's normal gap instead of leaving unused space.
     private var directionCell: some View {
         TextField("", text: $model.instruction, axis: .vertical)
             .textFieldStyle(.plain)
@@ -396,7 +307,7 @@ struct RibbonView: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
             .overlay(alignment: .topLeading) { placeholder }
-            .frame(minWidth: 140, maxWidth: 460, alignment: .leading)
+            .frame(minWidth: 140, maxWidth: .infinity, alignment: .leading)
             .frame(minHeight: controlHeight, alignment: .topLeading)
             .background(controlShape.fill(RibbonPalette.control))
             // Past four lines the field scrolls, and without this the line
@@ -459,21 +370,12 @@ struct RibbonView: View {
         }
     }
 
-    /// The lane's one vermilion control, and the only one on this surface.
-    ///
-    /// While a request runs the comet rides this border — the panel wore it on
-    /// its instruction field, but here Run is what the user is waiting on.
-    /// Going inert softens the fill only. Dark ink on a bright fill does not
-    /// survive being dimmed: both ends walk toward the lane together and the
-    /// label's contrast collapses to about 2.5:1, which is how the one word on
-    /// the lane's one accent control became the least readable thing on it.
+    /// The primary command, styled like the other controls at rest. While a
+    /// request runs, the animated border carries progress without leaving a
+    /// permanent accent block in the row.
     private var runControl: some View {
         Button { model.runPrimary() } label: {
-            // Transparent, not hidden: the button still takes its size and
-            // mouse hit region from the real label. What is drawn is the
-            // overlay below.
             runLabel
-                .opacity(0)
                 .frame(minWidth: 72, minHeight: controlHeight)
                 .contentShape(controlShape)
         }
@@ -481,7 +383,7 @@ struct RibbonView: View {
         // The fill and the running border hang off the button rather than off
         // its label: a `Text` wrapped in a background is rendered as an image,
         // and an image-backed button has no accessible name to override.
-        .background(controlShape.fill(locked ? RibbonPalette.actionInert : RibbonPalette.action))
+        .background(controlShape.fill(RibbonPalette.control))
         .overlay {
             if model.phase == .running, model.showsRunningAnimation {
                 // The head is light, not vermilion: the comet is riding the
@@ -505,12 +407,6 @@ struct RibbonView: View {
         .focused($focus, equals: .run)
         .ribbonFocusRing(model.focusedCell == .run, radius: 8, inset: -3)
         .disabled(locked)
-        // Drawn *after* `disabled`, and so outside the subtree it dims.
-        // SwiftUI fades a disabled button's label whatever style it wears, and
-        // that fade is the collapse described above; the softened fill is the
-        // signal instead. `disabled` still owns the behaviour — no hit
-        // testing, out of the focus chain, dimmed to VoiceOver.
-        .overlay { runLabel.allowsHitTesting(false) }
         .help(model.resolvedActionTitle)
         // The visible glyph is a keyboard hint, not a word.
         .accessibilityLabel("Run")
@@ -521,7 +417,7 @@ struct RibbonView: View {
     private var runLabel: some View {
         Text("Run ↵")
             .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(RibbonPalette.onAction)
+            .foregroundStyle(RibbonPalette.text)
     }
 
     // MARK: - Control chrome
@@ -529,20 +425,6 @@ struct RibbonView: View {
     /// One radius for every control on the lane.
     private var controlShape: RoundedRectangle {
         RoundedRectangle(cornerRadius: 8, style: .continuous)
-    }
-
-    /// A non-interactive control-shaped surface, for the states where the
-    /// Target cell has nothing to offer a menu.
-    ///
-    /// `fixedSize` matches what `.fixedSize()` does for the menu branch: the
-    /// label carries a trailing spacer so its `minWidth` reservation pushes
-    /// left, and without the clamp that spacer would let the chip swallow every
-    /// point of slack the row has.
-    private func chip(@ViewBuilder content: () -> some View) -> some View {
-        content()
-            .fixedSize()
-            .background(controlShape.fill(RibbonPalette.control))
-            .accessibilityElement(children: .combine)
     }
 
     /// Icon, value and — when the control opens a menu — a disclosure chevron.

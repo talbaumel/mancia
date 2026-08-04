@@ -141,7 +141,7 @@ one `EditCoordinator`, one `StatusBarController`, one `HotkeyManager`, and one
    Accessibility; every failure path returns `nil` and placement degrades to
    the screen rather than failing the session.
 
-  The lane is a focused **edit session**. Target, Action, Direction and Run
+  The lane is a focused **edit session**. Action, Direction and Run
    sit on a **single row**, dimmed and disabled while a request runs. Each
    control names itself — an icon and a value in a chip, a prompt inside the
    field — rather than carrying a caption above it, which is what lets the row

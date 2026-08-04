@@ -174,6 +174,7 @@ request.
 make build   # debug build
 make test    # unit tests
 make run     # build the .app and launch it
+make rerun   # quit, reset macOS permissions, rebuild, and launch
 ```
 
 Copilot CLI is the only provider today; `Sources/Mancia/Providers` is the

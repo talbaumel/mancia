@@ -81,6 +81,7 @@ func keyboardLayoutPreservesUnmappedCharacters() {
 
 // MARK: - Automatic selection trigger
 
+@MainActor
 @Test("Selection monitor recognizes keyboard selection gestures")
 func selectionMonitorKeyboardGestures() {
     #expect(SelectionMonitor.canFinishSelection(keyCode: 123, modifiers: [.shift]))
@@ -1239,8 +1240,6 @@ func ribbonFocusCycles() {
     model.moveFocus(.next)
     #expect(model.focusedCell == .run)
     model.moveFocus(.next)
-    #expect(model.focusedCell == .target)
-    model.moveFocus(.next)
     #expect(model.focusedCell == .action)
     model.moveFocus(.next)
     #expect(model.focusedCell == .direction)
@@ -1248,7 +1247,7 @@ func ribbonFocusCycles() {
     model.moveFocus(.previous)
     #expect(model.focusedCell == .action)
     model.moveFocus(.previous)
-    #expect(model.focusedCell == .target)
+    #expect(model.focusedCell == .run)
 }
 
 @MainActor
@@ -1282,8 +1281,8 @@ func ribbonNumberShortcutsFollowVisibleButtons() {
 }
 
 @MainActor
-@Test("Target leaves the focus ring when there is no selection")
-func ribbonFocusSkipsStaticTarget() {
+@Test("Smart Edit focus order is independent of selection state")
+func ribbonFocusOrderIgnoresSelectionState() {
     let model = PanelModel()
     model.reset(hasSelection: false, charCount: 0)
     model.showSmartEdit()

@@ -15,7 +15,7 @@ final class PanelModel {
     enum Scope: Equatable { case selection, document }
     /// The ribbon's focusable cells, listed in Tab order.
     enum Cell: Hashable {
-        case oops, snippets, snippet(Int), smartEdit, target, action, direction, run
+        case oops, snippets, snippet(Int), smartEdit, action, direction, run
     }
 
     var phase: Phase = .idle {
@@ -224,18 +224,12 @@ final class PanelModel {
         focusedCell = cells[(current + step) % cells.count]
     }
 
-    /// Target drops out of the ring while it is a static label — there is no
-    /// selection to choose, so there is nothing there to operate.
     var focusableCells: [Cell] {
         guard smartEditExpanded else {
             if snippetsExpanded { return snippets.indices.map(Cell.snippet) }
             return [.oops, .snippets, .smartEdit]
         }
-        let smartEditCells: [Cell] = [.target, .action, .direction, .run]
-        guard hasSelection, !capturing else {
-            return smartEditCells.filter { $0 != .target }
-        }
-        return smartEditCells
+        return [.action, .direction, .run]
     }
 
     /// True when the user has typed something to act on, as opposed to leaving

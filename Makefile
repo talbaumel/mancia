@@ -1,4 +1,4 @@
-.PHONY: build test app release dmg run clean
+.PHONY: build test app release dmg run rerun clean
 
 SWIFT := ./scripts/swift.sh
 
@@ -20,6 +20,9 @@ dmg:
 
 run: app
 	open build/Mancia.app
+
+rerun:
+	./scripts/rebuild_and_run.sh
 
 clean:
 	$(SWIFT) package clean

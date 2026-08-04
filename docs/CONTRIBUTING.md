@@ -25,6 +25,7 @@ make build
 make test
 make app
 make run
+make rerun
 ```
 
 For provider-only checks:
@@ -42,6 +43,9 @@ and `swift test` are fine for normal local work; reach for the wrapper only if
 dependency resolution fails.
 
 `make run` is the fastest manual loop because it builds a real `.app` bundle.
+Use `make rerun` when testing first-run permission behavior: it quits Mancia,
+resets all TCC grants for its bundle identifier, rebuilds the app, and launches
+it again. Accessibility must be granted again after this command.
 To avoid re-granting Accessibility after every rebuild, use a stable local
 signing identity:
 

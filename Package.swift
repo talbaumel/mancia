@@ -11,6 +11,10 @@ let package = Package(
             url: "https://github.com/sindresorhus/KeyboardShortcuts",
             exact: "1.15.0"
         ),
+        .package(
+            url: "https://github.com/swiftlang/swift-testing.git",
+            exact: "0.12.0"
+        ),
     ],
     targets: [
         .executableTarget(
@@ -22,7 +26,10 @@ let package = Package(
         ),
         .testTarget(
             name: "ManciaTests",
-            dependencies: ["Mancia"],
+            dependencies: [
+                "Mancia",
+                .product(name: "Testing", package: "swift-testing"),
+            ],
             path: "Tests/ManciaTests"
         ),
     ],
