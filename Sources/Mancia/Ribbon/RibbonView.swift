@@ -7,10 +7,13 @@ import SwiftUI
 /// one, it falls back to a predictable resting place at the top — under the
 /// menu bar, or under the frontmost window's title bar. See `RibbonPlacement`.
 ///
-/// The lane opens with Oops and a Smart Edit disclosure. Smart Edit expands the
-/// row into one sentence: **Action · Direction · Run**. Those cells
-/// carry no captions, and the resolved action is spelled out in the Action chip
-/// itself so an empty Direction meaning Improve is never implicit.
+/// The lane is one compact strip of actions.
+/// All five actions are visible; selecting Custom replaces it with Direction
+/// while the four built-in actions stay put. The cells carry no captions: they
+/// were the first thing to go when the row was collapsed to one line, and the
+/// resolved action is spelled out in the Action chip itself instead — which is
+/// what the panel
+/// this replaces got wrong by leaving "an empty field means Improve" implicit.
 ///
 /// The lane's width is imposed by `RibbonPlacement`; its height comes from its
 /// content, which is the opposite of how the floating panel sizes itself.
@@ -33,12 +36,15 @@ struct RibbonView: View {
     /// Tab arrives at the window rather than at a view.
     ///
     /// It is a mirror, not the ring's input. SwiftUI grants `@FocusState` to
-    /// the Direction field and refuses it to the three `.focusable()` cells, so
+    /// Direction and refuses it to the `.focusable()` cells, so
     /// Tab left the ring stuck on the field while the model — and therefore
     /// Return, which the window routes by `focusedCell` — had already moved on.
     /// The ring reads the model, which is the stop the keyboard is actually on.
     @FocusState private var focus: PanelModel.Cell?
+    @State private var hoveredAction: Int?
+    @State private var customRunHovered = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     /// The height of every control on the command row, and so the height the
     /// row rests at once its padding is added.
@@ -47,12 +53,12 @@ struct RibbonView: View {
     /// wraps, and everything below it — the failure strip, the review
     /// region — is added by later phases and grows the lane further downward.
     private let rowHeight: CGFloat = 48
-    /// Room for the widest thing each menu can say — "Selection · 12345" and
-    /// "Your instruction" — so neither cell resizes as its value changes and
-    /// drags the rest of the row sideways.
-    private let actionMinWidth: CGFloat = 158
 
     var body: some View {
+        ribbonWithLayoutObservers
+    }
+
+    private var ribbonSurface: some View {
         VStack(alignment: .leading, spacing: 0) {
             commandRow
             statusStrip
@@ -62,53 +68,76 @@ struct RibbonView: View {
             }
         }
         .frame(width: width)
-        .ribbonGlassBackground(in: shape)
+        .background {
+            glassSurface(tint: RibbonPalette.laneTint, in: shape)
+        }
         .clipShape(shape)
         .overlay(shape.strokeBorder(RibbonPalette.laneEdge, lineWidth: 1))
-        .onExitCommand { model.onCancel?() }
-        .onChange(of: model.focusSeq) { focusDirection() }
+    }
+
+    private var ribbonWithFocusObservers: some View {
+        ribbonSurface
+        .onExitCommand { model.escape() }
+        .onAppear { adopt(model.focusedCell) }
+        .onChange(of: model.sessionSeq) { adopt(model.focusedCell) }
+        .onChange(of: model.focusSeq) { adopt(model.focusedCell) }
         .onChange(of: model.focusedCell) { adopt(model.focusedCell) }
-        .onChange(of: focus) { if let focus, isLive { model.focusedCell = focus } }
-        .onChange(of: model.phase) { announcePhase(); relayout(); adopt(model.focusedCell) }
+        .onChange(of: focus) {
+            guard isLive else { return }
+            guard model.focusedCell != .none else {
+                focus = nil
+                return
+            }
+            if let focus { model.focusedCell = focus }
+        }
+    }
+
+    private var ribbonWithLayoutObservers: some View {
+        ribbonWithFocusObservers
+        .onChange(of: model.phase) {
+            customRunHovered = false
+            announcePhase()
+            relayout()
+            adopt(model.focusedCell)
+        }
         .onChange(of: model.capturing) { relayout() }
-        .onChange(of: model.versionCount) { relayout() }
         // The Direction field wraps to four lines, so what the user types is a
         // height input like any other.
         .onChange(of: model.instruction) { relayout() }
+        .onChange(of: model.isCustomInstructionSelected) {
+            hoveredAction = nil
+            customRunHovered = false
+            relayout()
+        }
         .onChange(of: model.previewExpanded) { relayout() }
         .onChange(of: model.errorDetailsExpanded) { relayout() }
         .onChange(of: model.errorText) { relayout() }
-        .onChange(of: model.snippets) { relayout() }
-        .onChange(of: model.snippetsExpanded) { relayout() }
-        .onChange(of: model.smartEditExpanded) { relayout() }
     }
 
     /// A lane flush against the top of the screen rounds only its bottom
     /// corners; one floating over the host or against the selection rounds all
     /// four.
     private var shape: UnevenRoundedRectangle {
-        let radius: CGFloat = 20
         switch anchor {
         case .screen:
-            return UnevenRoundedRectangle(
-                topLeadingRadius: 0, bottomLeadingRadius: radius,
-                bottomTrailingRadius: radius, topTrailingRadius: 0, style: .continuous)
-        case .hostWindow, .belowSelection, .aboveSelection, .belowPointer, .abovePointer:
-            return UnevenRoundedRectangle(
-                topLeadingRadius: radius, bottomLeadingRadius: radius,
-                bottomTrailingRadius: radius, topTrailingRadius: radius, style: .continuous)
+            UnevenRoundedRectangle(
+                topLeadingRadius: 0, bottomLeadingRadius: 20,
+                bottomTrailingRadius: 20, topTrailingRadius: 0, style: .continuous)
+        case .hostWindow, .belowSelection, .aboveSelection, .leftOfSelection, .rightOfSelection:
+            UnevenRoundedRectangle(
+                topLeadingRadius: 20, bottomLeadingRadius: 20,
+                bottomTrailingRadius: 20, topTrailingRadius: 20, style: .continuous)
         }
     }
 
-    /// The command row stays visible and readable while a request runs — the
-    /// user can check what they asked for — but its controls go inert.
+    /// The command row stays visible and readable while a request runs. Other
+    /// actions go inert; the active action stays live as Cancel.
     private var locked: Bool { model.phase == .running || model.phase == .confirm }
 
     // MARK: - Command row
 
-    /// Oops, Snippets, and Smart Edit at rest. Snippets gives way to its direct
-    /// key buttons; Smart Edit gives way to **Target · Action · Direction**, then iteration
-    /// history, live status, and Run.
+    /// One line of five Actions. Direction and its inline Run control replace
+    /// Custom while it is selected.
     ///
     /// Each cell used to carry a caption above its value. They were the widest
     /// thing on the lane and said the least: "Selection · 22", "Improve" and a
@@ -117,362 +146,258 @@ struct RibbonView: View {
     /// to one and let every control size to its own content instead of to a
     /// fixed width chosen to fit a label.
     private var commandRow: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Group {
-                if model.smartEditExpanded {
-                    actionCell
-                    directionCell
-                } else if model.snippetsExpanded {
-                    snippetControls
-                } else {
-                    oopsControl
-                    snippetsControl
-                    smartEditControl
-                }
-            }
-            .opacity(locked ? 0.5 : 1)
-            .disabled(locked)
-
-            if model.smartEditExpanded {
-                trailingCluster
-            }
+        HStack(spacing: 0) {
+            Spacer(minLength: 0)
+            actionStrip
+            Spacer(minLength: 0)
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 8)
         .padding(.vertical, 8)
         .frame(minHeight: rowHeight, alignment: .top)
+        .animation(.easeInOut(duration: 0.2), value: model.phase)
         .animation(
-            model.showsRunningAnimation ? .easeInOut(duration: 0.2) : nil,
-            value: model.phase)
+            reduceMotion ? nil : .easeOut(duration: 0.16),
+            value: model.isCustomInstructionSelected)
     }
 
     // MARK: - Cells
 
-    private var oopsControl: some View {
-        Button { model.runOops() } label: {
-            Label("Oops", systemImage: "keyboard")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(RibbonPalette.text)
-                .labelStyle(.titleAndIcon)
-                .frame(
-                    width: RibbonPlacement.compactOopsWidth,
-                    height: controlHeight)
-        }
-        .buttonStyle(.plain)
-        .background(controlShape.fill(RibbonPalette.control))
-        .contentShape(controlShape)
-        .focusable()
-        .focused($focus, equals: .oops)
-        .ribbonFocusRing(model.focusedCell == .oops, radius: 8, inset: 0)
-        .help("Switch English and Hebrew keyboard layout")
-        .accessibilityLabel("Oops")
-        .accessibilityHint("Corrects text typed with the wrong English or Hebrew keyboard layout")
-        .accessibilityIdentifier("Oops")
-    }
-
-    private var smartEditControl: some View {
-        Button { model.showSmartEdit() } label: {
-            Label("Smart Edit", systemImage: "sparkles")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(RibbonPalette.text)
-                .labelStyle(.titleAndIcon)
-                .lineLimit(1)
-                .padding(.horizontal, 12)
-                .frame(
-                    width: RibbonPlacement.compactSmartEditWidth,
-                    height: controlHeight)
-        }
-        .buttonStyle(.plain)
-        .background(controlShape.fill(RibbonPalette.control))
-        .contentShape(controlShape)
-        .focusable()
-        .focused($focus, equals: .smartEdit)
-        .ribbonFocusRing(model.focusedCell == .smartEdit, radius: 8, inset: 0)
-        .help("Show AI-powered editing controls")
-        .accessibilityLabel("Smart Edit")
-        .accessibilityHint("Shows target, action, direction, and run controls")
-        .accessibilityIdentifier("SmartEdit")
-    }
-
-    private var snippetsControl: some View {
-        Button { model.showSnippets() } label: {
-            Label("Snippets", systemImage: "doc.on.clipboard")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(RibbonPalette.text)
-                .labelStyle(.titleAndIcon)
-                .lineLimit(1)
-                .frame(
-                    width: RibbonPlacement.compactSnippetsWidth,
-                    height: controlHeight)
-        }
-        .buttonStyle(.plain)
-        .background(controlShape.fill(RibbonPalette.control))
-        .contentShape(controlShape)
-        .focusable()
-        .focused($focus, equals: .snippets)
-        .ribbonFocusRing(model.focusedCell == .snippets, radius: 8, inset: 0)
-        .help("Show local snippet keys")
-        .accessibilityLabel("Snippets")
-        .accessibilityHint("Replaces the ribbon with local snippet buttons")
-        .accessibilityIdentifier("Snippets")
-    }
-
-    @ViewBuilder
-    private var snippetControls: some View {
-        ForEach(Array(model.snippets.enumerated()), id: \.element.id) { index, snippet in
-            Button { model.runSnippet(snippet) } label: {
-                Text(snippet.title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(RibbonPalette.text)
-                    .padding(.horizontal, 12)
-                    .frame(
-                        width: RibbonPlacement.compactSnippetWidth(for: snippet.title),
-                        height: controlHeight)
-                    .contentShape(controlShape)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-            .buttonStyle(.plain)
-            .background(controlShape.fill(RibbonPalette.control))
-            .contentShape(controlShape)
-            .focusable()
-            .focused($focus, equals: .snippet(index))
-            .ribbonFocusRing(model.focusedCell == .snippet(index), radius: 8, inset: 0)
-            .help("Paste \(snippet.title)")
-            .accessibilityLabel(snippet.title)
-            .accessibilityHint("Pastes this local value into the current app")
-            .accessibilityIdentifier("Snippet-\(index)")
-        }
-    }
-
-    /// ⌘1…⌘4, and nothing past the fourth preset — a catalog longer than that
-    /// has outgrown a digit row, and an unlabeled fifth key is worse than none.
-    /// `\0` is `KeyEquivalent`'s way of asking for no shortcut at all.
-    private func presetShortcut(_ index: Int) -> KeyEquivalent {
-        index < 4 ? KeyEquivalent(Character("\(index + 1)")) : KeyEquivalent("\0")
-    }
-
-    /// The action that will actually run, spelled out. The menu pins a preset
-    /// explicitly; `Your instruction` unpins and hands the decision back to the
-    /// Direction field.
-    private var actionCell: some View {
-        Menu {
-            ForEach(Array(PanelPreset.all.enumerated()), id: \.element.id) { index, preset in
-                Button {
-                    model.selectPreset(at: index)
-                } label: {
-                    Label(preset.title, systemImage: preset.action.symbol)
+    /// The four built-ins keep fixed positions. Direction replaces Custom's
+    /// trailing slot and absorbs the room added by the expanded ribbon.
+    private var actionStrip: some View {
+        HStack(spacing: 8) {
+            ForEach(model.actionDisplayOrder, id: \.self) { index in
+                if index == PanelModel.customActionIndex,
+                   model.isCustomInstructionSelected
+                {
+                    directionCell
+                        .transition(directionTransition)
+                } else {
+                    actionButton(at: index)
                 }
-                // Renders the ⌘-digit beside the item. Only the first four get
-                // one, and it is a hint rather than a binding: `KeyablePanel`
-                // resolves these above the SwiftUI tree and consumes them, so
-                // the key works whether or not this menu has ever been opened.
-                .keyboardShortcut(presetShortcut(index), modifiers: .command)
             }
-            Divider()
-            Button("Your instruction") { model.clearPreset() }
-                .keyboardShortcut("0", modifiers: .command)
-        } label: {
-            chipLabel(
-                model.resolvedActionSymbol, model.resolvedActionTitle,
-                minWidth: actionMinWidth)
         }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .background(controlShape.fill(RibbonPalette.control))
-        .focusable()
-        .focused($focus, equals: .action)
-        .ribbonFocusRing(model.focusedCell == .action, radius: 8, inset: 0)
-        .accessibilityLabel("Action")
-        .accessibilityValue(model.resolvedActionTitle)
-        .accessibilityIdentifier("Action")
     }
 
-    /// The instruction field. Optional by design — an empty Direction is a
-    /// valid Improve, which is what the Action chip is there to say out loud.
+    private func actionButton(at index: Int) -> some View {
+        let title = model.actionTitle(at: index) ?? ""
+        let symbol = model.actionSymbol(at: index) ?? ""
+        let status = model.actionProgressLabel(at: index) ?? title
+        let shortcut = model.actionShortcut(at: index) ?? ""
+        let selected = model.isActionSelected(at: index)
+        let processing = model.phase == .running && selected
+        let isHovered = hoveredAction == index
+        let displayedSymbol = processing && isHovered ? "xmark" : symbol
+        let unavailable = model.phase == .confirm || (model.phase == .running && !processing)
+        return Button {
+            if processing {
+                model.onCancelRun?()
+            } else {
+                model.activateAction(at: index)
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: displayedSymbol)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(RibbonPalette.symbol)
+                    .frame(width: 14)
+                ZStack {
+                    Text(title).opacity(!processing && !isHovered ? 1 : 0)
+                    Text(shortcut).opacity(!processing && isHovered ? 1 : 0)
+                    Text(status).opacity(processing && !isHovered ? 1 : 0)
+                    Text("Cancel").opacity(processing && isHovered ? 1 : 0)
+                }
+            }
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(RibbonPalette.text)
+            .lineLimit(1)
+            .padding(.horizontal, 12)
+            .frame(height: controlHeight)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .background(
+            controlShape.fill(
+                isHovered
+                    ? RibbonPalette.controlHoverTint
+                    : RibbonPalette.controlTint))
+        .overlay {
+            if processing {
+                SwooshBorder(
+                    shape: controlShape,
+                    tint: RibbonPalette.processing,
+                    animated: !reduceMotion,
+                    lineWidth: 2)
+            } else {
+                controlShape.strokeBorder(RibbonPalette.controlEdge, lineWidth: 1)
+            }
+        }
+        .focusable()
+        .focused($focus, equals: .action(index))
+        .ribbonFocusRing(model.focusedCell == .action(index), radius: 8, inset: 0)
+        .disabled(unavailable)
+        .opacity(unavailable ? 0.5 : 1)
+        .help(processing ? "\(status). Click to cancel." : "\(title) (\(shortcut))")
+        .onHover { isHovering in
+            guard isLive else { return }
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.1)) {
+                if isHovering {
+                    hoveredAction = index
+                } else if hoveredAction == index {
+                    hoveredAction = nil
+                }
+            }
+        }
+        .accessibilityLabel(processing ? status : title)
+        .accessibilityValue(processing ? "In progress" : selected ? "Selected" : "Not selected")
+        .accessibilityHint(processing
+            ? "Click to cancel."
+            : index == PanelModel.customActionIndex
+                ? "Command \(index + 1). Opens the custom instruction field."
+                : "Command \(index + 1). Runs immediately.")
+        .accessibilityIdentifier("Action-\(index + 1)")
+    }
+
+    /// The instruction field, disclosed only for Custom.
     ///
     /// It is the one cell that takes the lane's slack, and the only one that
     /// grows: past a line it wraps and pushes the lane downward, to four lines
-    /// and then a scroller. Horizontally it fills the row up to Run so the two
-    /// controls keep the row's normal gap instead of leaving unused space.
+    /// and then a scroller. The cap is roughly the 70-character measure that
+    /// reads comfortably — past that the field was simply absorbing the lane,
+    /// which is what made it look like the most important thing on a surface
+    /// where it is optional. A caption above it would have been a third name
+    /// for a control that already carries a prompt inside it and lights its
+    /// border when it has focus.
     private var directionCell: some View {
-        TextField("", text: $model.instruction, axis: .vertical)
-            .textFieldStyle(.plain)
-            .lineLimit(1...4)
-            .font(directionFont)
-            .foregroundStyle(RibbonPalette.text)
-            .focused($focus, equals: .direction)
-            .onSubmit { model.runPrimary() }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .overlay(alignment: .topLeading) { placeholder }
-            .frame(minWidth: 140, maxWidth: .infinity, alignment: .leading)
-            .frame(minHeight: controlHeight, alignment: .topLeading)
-            .background(controlShape.fill(RibbonPalette.control))
-            // Past four lines the field scrolls, and without this the line
-            // sliding out of view draws over the field's own top edge.
-            .clipShape(controlShape)
-            .overlay(controlShape.strokeBorder(RibbonPalette.laneEdge, lineWidth: 1))
-            .ribbonFocusRing(model.focusedCell == .direction, radius: 8, inset: 0)
-            .accessibilityLabel("Direction")
-            .accessibilityIdentifier("CustomInstruction")
+        HStack(alignment: .top, spacing: 8) {
+            TextField("", text: $model.instruction, axis: .vertical)
+                .textFieldStyle(.plain)
+                .lineLimit(1...4)
+                .font(directionFont)
+                .foregroundStyle(RibbonPalette.text)
+                .focused($focus, equals: .direction)
+                .onSubmit { model.runPrimary() }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .overlay(alignment: .topLeading) { placeholder }
+                .frame(width: 324, alignment: .leading)
+                .frame(minHeight: controlHeight, alignment: .topLeading)
+                .disabled(locked)
+                .background(controlShape.fill(RibbonPalette.directionTint))
+                // Past four lines the field scrolls, and without this the line
+                // sliding out of view draws over the field's own top edge.
+                .clipShape(controlShape)
+                .overlay(controlShape.strokeBorder(RibbonPalette.controlEdge, lineWidth: 1))
+                .ribbonFocusRing(model.focusedCell == .direction, radius: 8, inset: 0)
+                .accessibilityLabel("Direction")
+                .accessibilityIdentifier("CustomInstruction")
+
+            customRunControl
+        }
+        .frame(width: 428, alignment: .leading)
+        .frame(minHeight: controlHeight, alignment: .topLeading)
+    }
+
+    private var customRunControl: some View {
+        let processing = model.phase == .running
+        let title = processing && customRunHovered ? "Cancel" : model.customSubmitTitle
+        let symbol = processing ? (customRunHovered ? "xmark" : "sparkles") : "play.fill"
+        return Button {
+            if processing {
+                model.onCancelRun?()
+            } else {
+                model.runPrimary()
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: symbol)
+                    .font(.system(size: 10, weight: .bold))
+                Text(title)
+            }
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(processing ? RibbonPalette.text : RibbonPalette.onCustomRun)
+            .frame(width: 96)
+            .frame(minHeight: controlHeight)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(
+            controlShape.fill(
+                processing
+                    ? (customRunHovered
+                        ? RibbonPalette.controlHoverTint
+                        : RibbonPalette.controlTint)
+                    : RibbonPalette.customRun))
+        .overlay {
+            if processing {
+                SwooshBorder(
+                    shape: controlShape,
+                    tint: RibbonPalette.processing,
+                    animated: !reduceMotion,
+                    lineWidth: 2)
+            }
+        }
+        .disabled(model.phase == .confirm || (!processing && !model.canRunPrimary))
+        .focusable()
+        .focused($focus, equals: .run)
+        .ribbonFocusRing(model.focusedCell == .run, radius: 8, inset: 0)
+        .help(processing ? "Cancel custom action" : "Run custom action")
+        .onHover { isHovering in
+            guard isLive else { return }
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.1)) {
+                customRunHovered = processing && isHovering
+            }
+        }
+        .accessibilityLabel(processing ? "Cancel custom action" : title)
+        .accessibilityIdentifier("Run")
+    }
+
+    private var directionTransition: AnyTransition {
+        if reduceMotion { return .opacity }
+        return .modifier(
+            active: HorizontalReveal(progress: 0),
+            identity: HorizontalReveal(progress: 1))
     }
 
     private var directionFont: Font { .system(size: 13, weight: .medium) }
 
-    // MARK: - Trailing cluster
-
-    /// Iteration history, live status and Run, in that order.
-    ///
-    /// Status used to own a 34pt strip of its own: a dot, one word, and the
-    /// rest of the lane empty. Both it and the version counter now ride beside
-    /// the control they are about, in the width the Direction field gave back.
-    /// Only a failure still earns a row — it carries a message too long for
-    /// this cluster and three recoveries to offer.
-    private var trailingCluster: some View {
-        HStack(spacing: 10) {
-            secondaryAction
-            inlineStatus
-            runControl
-        }
-        .frame(height: controlHeight)
-    }
-
-    /// The slot the version counter and Cancel share. They never co-occur: one
-    /// belongs to a finished run, the other to a running one.
-    @ViewBuilder
-    private var secondaryAction: some View {
-        switch model.phase {
-        case .running:
-            GhostButton("Cancel", tint: RibbonPalette.caption) { model.onCancelRun?() }
-                .accessibilityIdentifier("Cancel")
-        case .applied where model.versionCount > 1:
-            VersionNav(
-                model: model, tint: RibbonPalette.caption,
-                faint: RibbonPalette.caption.opacity(0.45))
-        default:
-            EmptyView()
-        }
-    }
-
-    /// A resting lane reports nothing: the command row already says everything
-    /// there is to know. While capturing, the Target chip carries the word.
-    @ViewBuilder
-    private var inlineStatus: some View {
-        switch model.phase {
-        case .running:
-            statusLabel("\(runningLabel)…", dot: RibbonPalette.caption)
-        case .applied:
-            statusLabel("Improved", dot: RibbonPalette.applied, tint: RibbonPalette.applied)
-        default:
-            EmptyView()
-        }
-    }
-
-    /// The primary command, styled like the other controls at rest. While a
-    /// request runs, the animated border carries progress without leaving a
-    /// permanent accent block in the row.
-    private var runControl: some View {
-        Button { model.runPrimary() } label: {
-            runLabel
-                .frame(minWidth: 72, minHeight: controlHeight)
-                .contentShape(controlShape)
-        }
-        .buttonStyle(.plain)
-        // The fill and the running border hang off the button rather than off
-        // its label: a `Text` wrapped in a background is rendered as an image,
-        // and an image-backed button has no accessible name to override.
-        .background(controlShape.fill(RibbonPalette.control))
-        .overlay {
-            if model.phase == .running, model.showsRunningAnimation {
-                // The head is light, not vermilion: the comet is riding the
-                // one control on the lane already filled with the tint, and a
-                // vermilion head there had nothing to be brighter than. The
-                // tail and the halo stay vermilion, so the lane still spends
-                // its accent exactly once.
-                SwooshBorder(
-                    shape: controlShape,
-                    tint: RibbonPalette.action,
-                    animated: !reduceMotion,
-                    head: RibbonPalette.text,
-                    halo: 4,
-                    lineWidth: 2.5
-                )
-                .allowsHitTesting(false)
-            }
-        }
-        .contentShape(controlShape)
-        .focusable()
-        .focused($focus, equals: .run)
-        .ribbonFocusRing(model.focusedCell == .run, radius: 8, inset: -3)
-        .disabled(locked)
-        .help(model.resolvedActionTitle)
-        // The visible glyph is a keyboard hint, not a word.
-        .accessibilityLabel("Run")
-        .accessibilityValue(model.resolvedActionTitle)
-        .accessibilityIdentifier("Run")
-    }
-
-    private var runLabel: some View {
-        Text("Run ↵")
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(RibbonPalette.text)
-    }
-
     // MARK: - Control chrome
+
+    /// A frosted surface rather than a liquid one.
+    ///
+    /// Native Liquid Glass is nearly clear, so over a white document the lane
+    /// and its controls vanished into the page. A material base carries the
+    /// blur, and the ink tint above it holds a fixed step of contrast whatever
+    /// is behind the ribbon. Reduce Transparency drops to an opaque surface.
+    @ViewBuilder
+    private func glassSurface<S: Shape>(
+        tint: Color,
+        in shape: S
+    ) -> some View {
+        if reduceTransparency {
+            shape.fill(RibbonPalette.laneOpaque)
+        } else {
+            shape
+                .fill(.regularMaterial)
+                .overlay(shape.fill(tint))
+        }
+    }
 
     /// One radius for every control on the lane.
     private var controlShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: 8, style: .continuous)
-    }
-
-    /// Icon, value and — when the control opens a menu — a disclosure chevron.
-    /// The icon does the work the caption used to: it says which cell this is
-    /// before the value says what it holds.
-    ///
-    /// `minWidth` reserves room for the widest thing a cell can say. Without it
-    /// the row shuffles sideways mid-use — the Action chip alone grows by some
-    /// 50pt the instant the user types a first character, dragging the field
-    /// they are typing in along with it.
-    private func chipLabel(
-        _ symbol: String, _ title: String, detail: String? = nil, chevron: Bool = true,
-        minWidth: CGFloat = 0
-    ) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: symbol)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(RibbonPalette.caption)
-            Text(title)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(RibbonPalette.text)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            if let detail {
-                Text(detail)
-                    .font(.system(size: 11, weight: .medium))
-                    .monospacedDigit()
-                    .foregroundStyle(RibbonPalette.caption)
-            }
-            Spacer(minLength: 0)
-            if chevron {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(RibbonPalette.caption)
-            }
-        }
-        .padding(.horizontal, 10)
-        .frame(minWidth: minWidth, alignment: .leading)
-        .frame(height: controlHeight)
-        .contentShape(Rectangle())
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
     }
 
     /// The field's own prompt, drawn rather than handed to `TextField`.
     ///
     /// SwiftUI resolves a `prompt`'s colour from the system placeholder
-    /// register and ignores any foreground style put on the `Text`. Drawing it
-    /// keeps the placeholder in the ribbon's adaptive caption register and
-    /// readable over both versions of the glass control surface.
+    /// register and ignores any foreground style put on the `Text`. The lane
+    /// keeps a fixed dark register whatever the system appearance is, so in
+    /// Light Mode that register resolved to near-black on the field's
+    /// near-black fill — the prompt was there and unreadable. Drawing it makes
+    /// the colour ours, and the 5.13:1 against `control` that `RibbonPalette`
+    /// documents true rather than aspirational.
     @ViewBuilder
     private var placeholder: some View {
         if model.instruction.isEmpty {
@@ -492,11 +417,10 @@ struct RibbonView: View {
 extension RibbonView {
     /// The one phase that still earns a row of its own.
     ///
-    /// Every other status — reading, working, done — is a dot and a word, and
-    /// those now ride in the command row beside the control they describe. A
-    /// failure cannot: it carries a provider message too long for that cluster
-    /// and three recoveries to offer, and it is the one state where taking the
-    /// user's attention is the point.
+    /// Working lives on the active action control. A failure cannot: it carries
+    /// a provider message too long for the command
+    /// row and three recoveries to offer, and it is the one state where taking
+    /// the user's attention is the point.
     @ViewBuilder
     fileprivate var statusStrip: some View {
         if model.phase == .error {
@@ -534,16 +458,11 @@ extension RibbonView {
         }
     }
 
-    fileprivate var hairline: some View {
-        Rectangle().fill(RibbonPalette.laneEdge).frame(height: 1)
-    }
-
     private func statusLabel(
         _ text: String, dot: Color, tint: Color = RibbonPalette.caption
     ) -> some View {
         HStack(spacing: 7) {
             Circle().fill(dot).frame(width: 7, height: 7)
-            // The dot never carries the state alone; the words always name it.
             Text(text)
                 .font(.system(size: 11.5, weight: .medium))
                 .foregroundStyle(tint)
@@ -551,6 +470,10 @@ extension RibbonView {
                 .truncationMode(.tail)
         }
         .accessibilityElement(children: .combine)
+    }
+
+    fileprivate var hairline: some View {
+        Rectangle().fill(RibbonPalette.laneEdge).frame(height: 1)
     }
 
     /// The verb shown while a request runs. Stays honest during the brief
@@ -622,13 +545,6 @@ extension RibbonView {
 
     // MARK: - Focus
 
-    /// Put focus back in Direction whenever the lane explicitly retakes key
-    /// status.
-    fileprivate func focusDirection() {
-        model.focusedCell = .direction
-        adopt(.direction)
-    }
-
     /// Take the model's focus and hand it to SwiftUI, one turn later.
     ///
     /// Deferred because the cell may still be disabled in the update that
@@ -638,7 +554,36 @@ extension RibbonView {
         guard isLive else { return }
         Task { @MainActor in
             guard model.focusedCell == cell else { return }
-            focus = cell
+            focus = cell == .none ? nil : cell
         }
+    }
+}
+
+/// A field transition that grows only along the row, from the Action side. The
+/// surrounding HStack animates its layout in the same short transaction.
+private struct HorizontalReveal: @preconcurrency AnimatableModifier {
+    var progress: CGFloat
+
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        content
+            // Never scale the actual AppKit-backed TextField to zero. A zero
+            // x-scale makes its descendant transform non-invertible just as
+            // focus installs the field editor, which trips AppKit's
+            // `CGAffineTransformIsSingular` assertion. Reveal through a mask
+            // instead: the field keeps stable geometry while the visible slice
+            // still grows quickly from left to right.
+            .mask(alignment: .leading) {
+                GeometryReader { geometry in
+                    Rectangle()
+                        .frame(width: geometry.size.width * progress)
+                }
+            }
+            .opacity(progress)
+            .clipped()
     }
 }

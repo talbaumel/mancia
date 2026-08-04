@@ -4,93 +4,6 @@ import AppKit
 import KeyboardShortcuts
 @testable import Mancia
 
-// MARK: - Pasteboard snapshot
-
-@Test("Pasteboard snapshots ignore private lazy representations")
-func pasteboardSnapshotChoosesAStandardType() {
-    let privateType = NSPasteboard.PasteboardType("com.example.lazy-private-data")
-
-    #expect(PasteboardSnapshot.preferredType(in: [privateType, .html, .string]) == .string)
-    #expect(PasteboardSnapshot.preferredType(in: [privateType, .png]) == .png)
-    #expect(PasteboardSnapshot.preferredType(in: [privateType]) == nil)
-}
-
-// MARK: - Snippets
-
-@Test("Snippet YAML preserves labels, values, and leading zeroes")
-func snippetYAMLParsesFlatMapping() throws {
-    let snippets = try SnippetStore.parse("""
-    # Personal values
-    My wife ID: "012345678"
-    'Door code': '0042'
-    Plain value: abc-123
-    """)
-
-    #expect(snippets == [
-        TextSnippet(title: "My wife ID", value: "012345678"),
-        TextSnippet(title: "Door code", value: "0042"),
-        TextSnippet(title: "Plain value", value: "abc-123"),
-    ])
-}
-
-@Test("Snippet store creates the mock YAML file on first load")
-func snippetStoreSeedsMissingFile() throws {
-    let directory = FileManager.default.temporaryDirectory
-        .appendingPathComponent(UUID().uuidString, isDirectory: true)
-    defer { try? FileManager.default.removeItem(at: directory) }
-    let file = directory.appendingPathComponent("snippets.yaml")
-
-    let snippets = try SnippetStore.loadOrCreate(at: file)
-
-    #expect(FileManager.default.fileExists(atPath: file.path))
-    #expect(snippets.contains(TextSnippet(title: "My wife ID", value: "123456789")))
-}
-
-@MainActor
-@Test("Choosing a snippet forwards its exact value")
-func snippetSelectionForwardsExactValue() {
-    let model = PanelModel()
-    let snippet = TextSnippet(title: "Leading zero", value: "001234")
-    var received: TextSnippet?
-    model.onSnippet = { received = $0 }
-
-    model.runSnippet(snippet)
-
-    #expect(received == snippet)
-}
-
-// MARK: - Keyboard layout correction
-
-@Test("Oops converts English physical keys to Hebrew")
-func keyboardLayoutEnglishToHebrew() {
-    #expect(KeyboardLayoutConverter.convert("qwerty") == "/׳קראט")
-    #expect(KeyboardLayoutConverter.convert("akuo") == "שלום")
-}
-
-@Test("Oops converts Hebrew physical keys back to English")
-func keyboardLayoutHebrewToEnglish() {
-    #expect(KeyboardLayoutConverter.convert("/׳קראט") == "qwerty")
-    #expect(KeyboardLayoutConverter.convert("שלום") == "akuo")
-}
-
-@Test("Oops preserves spaces, numbers, and unmapped characters")
-func keyboardLayoutPreservesUnmappedCharacters() {
-    #expect(KeyboardLayoutConverter.convert("qwe 123!") == "/׳ק 123!")
-    #expect(KeyboardLayoutConverter.convert("קרא 123!") == "ert 123!")
-}
-
-// MARK: - Automatic selection trigger
-
-@MainActor
-@Test("Selection monitor recognizes keyboard selection gestures")
-func selectionMonitorKeyboardGestures() {
-    #expect(SelectionMonitor.canFinishSelection(keyCode: 123, modifiers: [.shift]))
-    #expect(SelectionMonitor.canFinishSelection(keyCode: 56, modifiers: []))
-    #expect(SelectionMonitor.canFinishSelection(keyCode: 0, modifiers: [.command]))
-    #expect(!SelectionMonitor.canFinishSelection(keyCode: 0, modifiers: []))
-    #expect(!SelectionMonitor.canFinishSelection(keyCode: 36, modifiers: []))
-}
-
 // MARK: - Prompt templates
 
 @Test("Every action embeds the input text and the output-only clause")
@@ -414,21 +327,6 @@ func confirmSettingDefaultsOnAndPersists() {
     first.confirmWholeDocumentReplace = false
     let second = AppSettings(defaults: defaults, modelCatalog: { [] })
     #expect(second.confirmWholeDocumentReplace == false)
-}
-
-@MainActor
-@Test("Automatic selection appearance defaults on and persists")
-func selectionAppearanceSettingDefaultsOnAndPersists() {
-    let suite = "mancia-test-\(UUID().uuidString)"
-    let defaults = UserDefaults(suiteName: suite)!
-    defer { defaults.removePersistentDomain(forName: suite) }
-
-    let first = AppSettings(defaults: defaults, modelCatalog: { [] })
-    #expect(first.showRibbonOnTextSelection)
-
-    first.showRibbonOnTextSelection = false
-    let second = AppSettings(defaults: defaults, modelCatalog: { [] })
-    #expect(!second.showRibbonOnTextSelection)
 }
 
 @MainActor
@@ -789,15 +687,28 @@ func tieredUnknownCategoryFallsBackToBalanced() {
     #expect(Set(tiers[0].models.map(\.id)) == ["mystery", "weird"])
 }
 
-@Test("tiered sorts within a tier by price then by name")
-func tieredSortsByPriceThenName() {
+@Test("tiered sorts provider families A-Z and models newest-first within each family")
+func tieredSortsByProviderThenNewestModel() {
     let models = [
-        CopilotModel(id: "z-high", name: "Z High", modelPickerCategory: "powerful", modelPickerPriceCategory: "high"),
-        CopilotModel(id: "a-medium", name: "A Medium", modelPickerCategory: "powerful", modelPickerPriceCategory: "medium"),
-        CopilotModel(id: "b-medium", name: "B Medium", modelPickerCategory: "powerful", modelPickerPriceCategory: "medium"),
+        CopilotModel(id: "gpt-5.4", name: "GPT-5.4", modelPickerCategory: "powerful", modelPickerPriceCategory: "low", usageMultiplier: 0),
+        CopilotModel(id: "grok-3", name: "Grok 3", modelPickerCategory: "powerful", modelPickerPriceCategory: "medium", usageMultiplier: 1),
+        CopilotModel(id: "claude-opus-4.8", name: "Claude Opus 4.8", modelPickerCategory: "powerful", modelPickerPriceCategory: "high", usageMultiplier: 10),
+        CopilotModel(id: "gemini-3.1", name: "Gemini 3.1", modelPickerCategory: "powerful", modelPickerPriceCategory: "low", usageMultiplier: 0.5),
+        CopilotModel(id: "gpt-5.6", name: "GPT-5.6", modelPickerCategory: "powerful", modelPickerPriceCategory: "high", usageMultiplier: 12),
+        CopilotModel(id: "nova-2", name: "Nova 2", modelPickerCategory: "powerful", modelPickerPriceCategory: "medium", usageMultiplier: 2),
+        CopilotModel(id: "gemini-3.6", name: "Gemini 3.6", modelPickerCategory: "powerful", modelPickerPriceCategory: "high", usageMultiplier: 8),
+        CopilotModel(id: "claude-opus-5", name: "Claude Opus 5", modelPickerCategory: "powerful", modelPickerPriceCategory: "low", usageMultiplier: 1),
+        CopilotModel(id: "gpt-5.5", name: "GPT-5.5", modelPickerCategory: "powerful", modelPickerPriceCategory: "medium", usageMultiplier: 3),
+        CopilotModel(id: "grok-4", name: "Grok 4", modelPickerCategory: "powerful", modelPickerPriceCategory: "low", usageMultiplier: 0.25),
     ]
     let tiers = CopilotModelCatalog.tiered(models)
-    #expect(tiers[0].models.map(\.id) == ["a-medium", "b-medium", "z-high"])
+    #expect(tiers[0].models.map(\.id) == [
+        "claude-opus-5", "claude-opus-4.8",
+        "gemini-3.6", "gemini-3.1",
+        "gpt-5.6", "gpt-5.5", "gpt-5.4",
+        "grok-4", "grok-3",
+        "nova-2",
+    ])
 }
 
 @Test("tiered omits empty tiers entirely")
@@ -1150,13 +1061,11 @@ func panelKeyCommandsResolve() {
         (",", .command, .openSettings),
         ("\r", .command, .submit),
         ("t", .command, .toggleTarget),
-        ("1", .command, .activateNumber(0)),
-        ("2", .command, .activateNumber(1)),
-        ("3", .command, .activateNumber(2)),
-        ("4", .command, .activateNumber(3)),
-        ("5", .command, .activateNumber(4)),
-        ("9", .command, .activateNumber(8)),
-        ("0", .command, .clearPreset),
+        ("1", .command, .activateAction(0)),
+        ("2", .command, .activateAction(1)),
+        ("3", .command, .activateAction(2)),
+        ("4", .command, .activateAction(3)),
+        ("5", .command, .activateAction(4)),
     ]
     for c in cases {
         #expect(
@@ -1177,7 +1086,8 @@ func panelKeyCommandsRejectNonShortcuts() {
     #expect(PanelKeyCommand.resolve(characters: nil, modifiers: .command) == nil)
     #expect(PanelKeyCommand.resolve(characters: "\r", modifiers: []) == nil)
     #expect(PanelKeyCommand.resolve(characters: "1", modifiers: []) == nil)
-    #expect(PanelKeyCommand.resolve(characters: "0", modifiers: [.command, .shift]) == nil)
+    #expect(PanelKeyCommand.resolve(characters: "0", modifiers: .command) == nil)
+    #expect(PanelKeyCommand.resolve(characters: "6", modifiers: .command) == nil)
 }
 
 @Test("Tab and shift-Tab resolve to focus moves")
@@ -1205,99 +1115,82 @@ func panelKeyCommandsResolvePrimaryReturn() {
 // MARK: - Ribbon keyboard model
 
 @MainActor
+@Test("Esc stops a running action and only closes the session when idle")
+func ribbonEscapeBacksOutOfTheRunFirst() {
+    let model = PanelModel()
+    model.reset(hasSelection: true, charCount: 12)
+    var cancelledRuns = 0
+    var closes = 0
+    model.onCancelRun = { cancelledRuns += 1 }
+    model.onCancel = { closes += 1 }
+
+    model.phase = .running
+    model.escape()
+    #expect(cancelledRuns == 1)
+    #expect(closes == 0)
+
+    model.phase = .idle
+    model.escape()
+    #expect(cancelledRuns == 1)
+    #expect(closes == 1)
+
+    // A finished run is not an in-flight one: Esc leaves after it, as before.
+    for phase in [PanelModel.Phase.applied, .error, .confirm] {
+        model.phase = phase
+        model.escape()
+    }
+    #expect(cancelledRuns == 1)
+    #expect(closes == 4)
+}
+
+@MainActor
 @Test("Tab cycles the ribbon's cells in order and wraps")
 func ribbonFocusCycles() {
     let model = PanelModel()
     model.reset(hasSelection: true, charCount: 12)
-    model.snippets = [
-        TextSnippet(title: "My ID", value: "123"),
-        TextSnippet(title: "Office", value: "456"),
-    ]
-    #expect(model.focusedCell == .smartEdit)
+    #expect(model.focusedCell == .none)
+    #expect(model.focusableCells == [
+        .action(0), .action(1), .action(2), .action(3), .action(4),
+    ])
 
     model.moveFocus(.next)
-    #expect(model.focusedCell == .oops)
-    model.moveFocus(.next)
-    #expect(model.focusedCell == .snippets)
-    model.moveFocus(.next)
-    #expect(model.focusedCell == .smartEdit)
-
-    model.showSnippets()
-    #expect(model.focusedCell == .snippet(0))
-    model.moveFocus(.next)
-    #expect(model.focusedCell == .snippet(1))
-    model.moveFocus(.next)
-    #expect(model.focusedCell == .snippet(0))
-
-    model.reset(hasSelection: true, charCount: 12)
-    model.snippets = []
-    model.showSnippets()
-    #expect(!model.snippetsExpanded)
-
-    model.showSmartEdit()
-    #expect(model.focusedCell == .direction)
-
-    model.moveFocus(.next)
-    #expect(model.focusedCell == .run)
-    model.moveFocus(.next)
-    #expect(model.focusedCell == .action)
-    model.moveFocus(.next)
-    #expect(model.focusedCell == .direction)
+    #expect(model.focusedCell == .action(0))
 
     model.moveFocus(.previous)
-    #expect(model.focusedCell == .action)
-    model.moveFocus(.previous)
+    #expect(model.focusedCell == .action(4))
+
+    model.selectCustomInstruction()
+    #expect(model.focusedCell == .direction)
+    #expect(model.focusableCells == [
+        .action(0), .action(1), .action(2), .action(3), .direction, .run,
+    ])
+    model.moveFocus(.next)
     #expect(model.focusedCell == .run)
 }
 
 @MainActor
-@Test("Command numbers activate the matching controls in each ribbon state")
-func ribbonNumberShortcutsFollowVisibleButtons() {
-    let model = PanelModel()
-    let snippets = [
-        TextSnippet(title: "First", value: "one"),
-        TextSnippet(title: "Second", value: "two"),
-    ]
-    model.snippets = snippets
-    var oopsRuns = 0
-    var pastedSnippet: TextSnippet?
-    model.onOops = { oopsRuns += 1 }
-    model.onSnippet = { pastedSnippet = $0 }
-
-    model.activateNumberedButton(at: 0)
-    #expect(oopsRuns == 1)
-    model.activateNumberedButton(at: 1)
-    #expect(model.snippetsExpanded)
-    model.activateNumberedButton(at: 1)
-    #expect(pastedSnippet == snippets[1])
-
-    model.reset(hasSelection: true, charCount: 12)
-    model.activateNumberedButton(at: 2)
-    #expect(model.smartEditExpanded)
-    model.activateNumberedButton(at: 1)
-    #expect(model.pinnedPreset == PanelPreset.all[1])
-    model.activateNumberedButton(at: 8)
-    #expect(model.pinnedPreset == PanelPreset.all[1])
-}
-
-@MainActor
-@Test("Smart Edit focus order is independent of selection state")
-func ribbonFocusOrderIgnoresSelectionState() {
+@Test("Action focus order is unchanged by selection capture")
+func ribbonFocusIgnoresSelectionCapture() {
     let model = PanelModel()
     model.reset(hasSelection: false, charCount: 0)
-    model.showSmartEdit()
-    #expect(model.focusableCells == [.action, .direction, .run])
+    #expect(model.focusableCells == [
+        .action(0), .action(1), .action(2), .action(3), .action(4),
+    ])
 
     model.moveFocus(.next)
-    #expect(model.focusedCell == .run)
-    model.moveFocus(.next)
-    #expect(model.focusedCell == .action)
+    #expect(model.focusedCell == .action(0))
 
     // Capturing hides the menu the same way, so the cell drops out too.
     model.reset(hasSelection: true, charCount: 8)
-    model.showSmartEdit()
     model.capturing = true
-    #expect(model.focusableCells == [.action, .direction, .run])
+    #expect(model.focusableCells == [
+        .action(0), .action(1), .action(2), .action(3), .action(4),
+    ])
+
+    model.selectCustomInstruction()
+    #expect(model.focusableCells == [
+        .action(0), .action(1), .action(2), .action(3), .direction, .run,
+    ])
 }
 
 @MainActor
@@ -1317,70 +1210,87 @@ func ribbonTargetShortcutsSetScope() {
 }
 
 @MainActor
-@Test("Command-1 through Command-4 pin the matching preset")
-func ribbonPresetShortcutsPin() {
+@Test("Command-1 through Command-4 immediately run all four built-ins")
+func ribbonKeyboardActionsRunImmediately() {
     let model = PanelModel()
+    var calls: [(EditAction, String?)] = []
+    model.onPerform = { calls.append(($0, $1)) }
     model.reset(hasSelection: true, charCount: 40)
-    #expect(model.pinnedPreset == nil, "a fresh session derives its action from the field")
 
-    for (index, preset) in PanelPreset.all.enumerated() {
-        model.selectPreset(at: index)
-        #expect(model.pinnedPreset == preset)
+    for (index, preset) in PanelPreset.keyboardActions.enumerated() {
+        let before = calls.count
+        model.activateAction(at: index)
+        #expect(calls.count == before + 1, "one shortcut should dispatch exactly once")
+        #expect(calls.last?.0 == preset.action)
+        #expect(calls.last?.1 == nil)
+        #expect(model.actionChoice == .preset(preset))
         #expect(model.resolvedActionTitle == preset.title)
+        #expect(model.focusedCell == .action(index))
     }
 }
 
 @MainActor
-@Test("A preset shortcut hands focus back to the Direction field")
-func ribbonPresetShortcutRefocusesTheField() {
+@Test("Command-5 discloses Custom without running it")
+func ribbonCustomShortcutDisclosesWithoutRunning() {
     let model = PanelModel()
+    var calls: [EditAction] = []
+    model.onPerform = { action, _ in calls.append(action) }
     model.reset(hasSelection: true, charCount: 40)
-    model.focusedCell = .run
     let before = model.focusSeq
 
-    model.selectPreset(at: 1)
-    #expect(model.focusedCell == .direction, "same hand-back the Action menu does")
+    model.activateAction(at: PanelModel.customActionIndex)
+
+    #expect(model.isCustomInstructionSelected)
+    #expect(model.resolvedActionTitle == "Custom")
+    #expect(model.focusedCell == .direction)
     #expect(model.focusSeq != before)
+    #expect(calls.isEmpty)
+    #expect(!model.canRunPrimary)
 }
 
 @MainActor
-@Test("An out-of-range preset shortcut does nothing")
-func ribbonPresetShortcutIgnoresOutOfRange() {
+@Test("An out-of-range keyboard action does nothing")
+func ribbonKeyboardActionIgnoresOutOfRange() {
     let model = PanelModel()
+    var calls: [EditAction] = []
+    model.onPerform = { action, _ in calls.append(action) }
     model.reset(hasSelection: true, charCount: 40)
-    model.selectPreset(at: 0)
-    let pinned = model.pinnedPreset
+    let choice = model.actionChoice
 
-    model.selectPreset(at: PanelPreset.all.count)
-    model.selectPreset(at: -1)
-    #expect(model.pinnedPreset == pinned, "a key past the catalog must not fire the last preset")
+    model.activateAction(at: PanelModel.actionIndices.count)
+    model.activateAction(at: -1)
+
+    #expect(model.actionChoice == choice)
+    #expect(calls.isEmpty)
 }
 
 @MainActor
 @Test("Shortcuts for disabled cells are inert while a request is in flight")
 func ribbonShortcutsRespectTheLock() {
     let model = PanelModel()
+    var calls: [EditAction] = []
+    model.onPerform = { action, _ in calls.append(action) }
     model.reset(hasSelection: true, charCount: 40)
     model.selectPreset(at: 0)
-    let pinned = model.pinnedPreset
+    let choice = model.actionChoice
 
     // The cells are greyed out and disabled in these phases, but the shortcuts
     // are resolved by the window, above the SwiftUI tree, so they never see it.
     for phase in [PanelModel.Phase.running, .confirm] {
         model.phase = phase
-        model.selectPreset(at: 1)
+        model.activateAction(at: 1)
         model.toggleScope()
-        model.clearPreset()
-        #expect(model.pinnedPreset == pinned, "\(phase) should not accept a preset change")
+        model.activateAction(at: PanelModel.customActionIndex)
+        #expect(model.actionChoice == choice, "\(phase) should not accept an action change")
         #expect(model.scope == .selection, "\(phase) should not accept a target change")
-        #expect(model.pinnedPreset != nil, "\(phase) should not accept an unpin")
+        #expect(calls.isEmpty, "\(phase) should not dispatch a keyboard action")
     }
 
     model.phase = .idle
-    model.selectPreset(at: 1)
-    #expect(model.pinnedPreset == PanelPreset.all[1], "and works again once the run lands")
-    model.clearPreset()
-    #expect(model.pinnedPreset == nil, "as does unpinning")
+    model.activateAction(at: 1)
+    #expect(calls == [PanelPreset.keyboardActions[1].action], "and works again once unlocked")
+    model.activateAction(at: PanelModel.customActionIndex)
+    #expect(model.isCustomInstructionSelected)
 }
 
 /// `hasSelection` is optimistically true while the capture is in flight, and
@@ -1402,38 +1312,37 @@ func ribbonTargetShortcutWaitsForCapture() {
 }
 
 @MainActor
-@Test("A fresh session resets transient ribbon state")
-func ribbonResetClearsTransientState() {
+@Test("A fresh session starts without focusing an action")
+func ribbonResetClearsFocus() {
     let model = PanelModel()
-    model.showSmartEdit()
-    model.focusedCell = .run
-    model.showsRunningAnimation = false
+    model.focusedCell = .direction
     let before = model.sessionSeq
 
     model.reset(hasSelection: true, charCount: 30)
 
-    #expect(model.focusedCell == .smartEdit)
-    #expect(!model.smartEditExpanded)
-    #expect(model.showsRunningAnimation)
+    #expect(model.focusedCell == .none)
     #expect(
         model.sessionSeq == before &+ 1,
-        "the lane's hosting view outlives a session, so observers need a reset signal")
+        "the lane's hosting view outlives a session, so the bump clears stale focus")
 }
 
 @MainActor
-@Test("Choosing from a menu hands focus back to Direction")
-func ribbonMenuChoiceReturnsFocus() {
+@Test("Action choices focus their primary control")
+func ribbonActionChoiceReturnsPrimaryFocus() {
     let model = PanelModel()
     model.reset(hasSelection: true, charCount: 40)
-    model.focusedCell = .action
+    model.focusedCell = .action(0)
     let before = model.focusSeq
 
-    model.returnFocusToDirection()
+    model.selectCustomInstruction()
 
     #expect(model.focusedCell == .direction)
     #expect(
         model.focusSeq == before &+ 1,
         "the bump is what makes the view adopt focus even when the cell already matched")
+
+    model.selectPreset(at: 1)
+    #expect(model.focusedCell == .action(1))
 }
 
 @MainActor
@@ -1466,9 +1375,9 @@ func shortcutModifierSymbolOrder() {
 @Test("Display renders a shortcut with symbols and an uppercased key, no Bundle.module")
 @MainActor
 func shortcutDisplayFormatting() {
-    // The app default: ⌥⌘A.
-    let shortcut = KeyboardShortcuts.Shortcut(.a, modifiers: [.option, .command])
-    #expect(ShortcutRecorderView.display(shortcut) == "⌥⌘A")
+    // The app default: ⌃⌥⌘E.
+    let shortcut = KeyboardShortcuts.Shortcut(.e, modifiers: [.control, .option, .command])
+    #expect(ShortcutRecorderView.display(shortcut) == "⌃⌥⌘E")
     #expect(ShortcutRecorderView.display(nil) == nil)
 }
 
@@ -1539,15 +1448,128 @@ func nonceAvoidsGuidanceCollision() {
     #expect(!"body".contains(nonce))
 }
 
-@Test("The field dropdown offers Improve plus the three agent presets, in menu order")
+@Test("The action strip exposes all four built-ins in shortcut order")
 func presetListShape() {
     #expect(PanelPreset.all == [.improve, .sharpen, .planFirst, .tighten])
+    #expect(PanelPreset.keyboardActions == [.improve, .sharpen, .planFirst, .tighten])
     #expect(PanelPreset.improve.action == .improve)
     #expect(PanelPreset.sharpen.action == .sharpen)
     #expect(PanelPreset.planFirst.action == .planFirst)
     #expect(PanelPreset.tighten.action == .tighten)
     #expect(PanelPreset.all.count == Set(PanelPreset.all.map(\.id)).count, "preset ids must be unique")
     #expect(PanelPreset.all.allSatisfy { !$0.action.isCustom }, "presets are named templates, never free-form")
+}
+
+@MainActor
+@Test("The four built-in actions stay put when Custom becomes the input")
+func actionButtonOrder() {
+    let model = PanelModel()
+
+    #expect(!model.prefersExpandedRibbon)
+    #expect(model.actionDisplayOrder == [0, 1, 2, 3, 4])
+    #expect(PanelModel.actionIndices.map { model.actionTitle(at: $0) } == [
+        "Improve", "Sharpen", "Plan first", "Tighten", "Custom",
+    ])
+    #expect(model.isActionSelected(at: 0))
+
+    model.selectCustomInstruction()
+
+    #expect(model.prefersExpandedRibbon)
+    #expect(model.actionDisplayOrder == [0, 1, 2, 3, 4])
+    #expect(model.isActionSelected(at: 4))
+    #expect(!model.isActionSelected(at: 0))
+}
+
+@MainActor
+@Test("Only Custom requests the expanded ribbon")
+func onlyCustomPrefersExpandedRibbon() {
+    let model = PanelModel()
+
+    for phase in [PanelModel.Phase.idle, .running, .confirm, .applied, .error] {
+        model.phase = phase
+        #expect(!model.prefersExpandedRibbon)
+    }
+
+    model.phase = .idle
+    model.selectCustomInstruction()
+    #expect(model.prefersExpandedRibbon)
+}
+
+@MainActor
+@Test("Every action exposes the matching Command-number hover label")
+func actionShortcutLabels() {
+    let model = PanelModel()
+
+    #expect(PanelModel.actionIndices.map { model.actionShortcut(at: $0) } == [
+        "⌘1", "⌘2", "⌘3", "⌘4", "⌘5",
+    ])
+    #expect(model.actionShortcut(at: -1) == nil)
+    #expect(model.actionShortcut(at: 5) == nil)
+}
+
+@MainActor
+@Test("Every action exposes its matching icon")
+func actionSymbols() {
+    let model = PanelModel()
+
+    #expect(PanelModel.actionIndices.map { model.actionSymbol(at: $0) } == [
+        EditAction.improve.symbol,
+        EditAction.sharpen.symbol,
+        EditAction.planFirst.symbol,
+        EditAction.tighten.symbol,
+        EditAction.custom("").symbol,
+    ])
+    #expect(model.actionSymbol(at: -1) == nil)
+    #expect(model.actionSymbol(at: 5) == nil)
+}
+
+@MainActor
+@Test("Only the active action label changes to its running status")
+func actionStatusLabels() {
+    let model = PanelModel()
+
+    #expect(model.actionLabel(at: 0) == "Improve")
+    #expect(model.customSubmitTitle == "Run")
+
+    model.selectPreset(at: 1)
+    #expect(model.actionLabel(at: 1) == "Sharpen")
+
+    model.phase = .running
+    #expect(model.actionLabel(at: 0) == "Improve")
+    #expect(model.actionLabel(at: 1) == "Sharpening")
+    #expect(model.customSubmitTitle == "Working")
+
+    model.phase = .applied
+    #expect(model.actionLabel(at: 1) == "Sharpen")
+
+    model.phase = .idle
+    model.selectCustomInstruction()
+    model.phase = .running
+    #expect(model.actionLabel(at: PanelModel.customActionIndex) == "Working")
+}
+
+@MainActor
+@Test("Version undo is available only after an applied edit")
+func versionUndoAvailability() {
+    let model = PanelModel()
+    var calls = 0
+    model.onUndoVersion = {
+        calls += 1
+        return true
+    }
+
+    #expect(!model.undoLastVersion())
+    model.phase = .applied
+    #expect(!model.undoLastVersion())
+
+    model.versionCount = 2
+    model.currentIndex = 1
+    #expect(model.undoLastVersion())
+    #expect(calls == 1)
+
+    model.phase = .running
+    #expect(!model.undoLastVersion())
+    #expect(calls == 1)
 }
 
 @Test("Every preset renders a distinct title, symbol, and progress label")
@@ -1581,7 +1603,7 @@ func presetGuidanceIsBounded() {
 
 // MARK: - Panel routing
 
-@Test("The primary path runs Improve when empty and the typed instruction otherwise")
+@Test("The primary path runs the explicitly selected action")
 @MainActor
 func primaryPathRouting() {
     let model = PanelModel()
@@ -1592,121 +1614,120 @@ func primaryPathRouting() {
     #expect(calls.last?.0 == .improve)
     #expect(calls.last?.1 == nil)
 
+    // A hidden draft does not silently change Improve or ride along as guidance.
+    model.instruction = "  hidden draft  "
+    model.runPrimary()
+    #expect(calls.last?.0 == .improve)
+    #expect(calls.last?.1 == nil)
+
+    model.selectCustomInstruction()
     model.instruction = "  make it formal  "
     model.runPrimary()
     #expect(calls.last?.0 == .custom("make it formal"))
     #expect(calls.last?.1 == nil)
 }
 
-@Test("A preset runs its own action, carrying the field text as guidance")
+@Test("Blank Custom cannot run or fall back to Improve")
 @MainActor
-func presetRunCarriesFieldText() {
+func blankCustomIsInert() {
     let model = PanelModel()
-    var calls: [(EditAction, String?)] = []
-    model.onPerform = { calls.append(($0, $1)) }
+    var calls: [EditAction] = []
+    model.onPerform = { action, _ in calls.append(action) }
 
-    // Empty field: the preset runs alone.
-    model.runPreset(.improve)
-    #expect(calls.last?.0 == .improve)
-    #expect(calls.last?.1 == nil)
+    model.selectCustomInstruction()
+    #expect(!model.canRunPrimary)
+    model.runPrimary()
 
-    // Typed text becomes guidance for the preset, not a custom instruction.
-    model.instruction = "  keep the bullet list  "
-    model.runPreset(.improve)
-    #expect(calls.last?.0 == .improve)
-    #expect(calls.last?.1 == "keep the bullet list")
+    model.instruction = "  \n "
+    #expect(!model.canRunPrimary)
+    model.runPrimary()
+    #expect(calls.isEmpty)
 }
 
 // MARK: - Ribbon command row
 
-@Test("The Action cell names Improve until the user types, then names the instruction")
+@Test("The resolved action title follows explicit selection, not typing")
 @MainActor
-func resolvedActionTitleTracksTyping() {
+func resolvedActionTitleTracksSelection() {
     let model = PanelModel()
 
-    #expect(model.resolvedActionTitle == "Improve", "an empty Direction runs Improve, and must say so")
+    #expect(model.resolvedActionTitle == "Improve")
 
     model.instruction = "translate to French"
-    #expect(model.resolvedActionTitle == "Your instruction")
+    #expect(model.resolvedActionTitle == "Improve", "a hidden draft cannot change the action")
 
-    // Whitespace is not an instruction, and the cell must not claim it is.
-    model.instruction = "   \n "
-    #expect(model.resolvedActionTitle == "Improve")
+    model.selectCustomInstruction()
+    #expect(model.resolvedActionTitle == "Custom")
+
+    model.selectPreset(at: 2)
+    #expect(model.resolvedActionTitle == PanelPreset.all[2].title)
 }
 
 /// The Action chip lost its caption, so its glyph is now what identifies the
 /// cell. It has to track the same resolution the title does or the two halves
 /// of one control would disagree.
-@Test("The Action cell's glyph follows the same resolution as its title")
+@Test("The resolved action glyph follows the same selection as its title")
 @MainActor
-func resolvedActionSymbolTracksTheTitle() {
+func resolvedActionSymbolTracksSelection() {
     let model = PanelModel()
 
     #expect(model.resolvedActionSymbol == EditAction.improve.symbol)
 
-    model.instruction = "translate to French"
+    model.selectCustomInstruction()
     #expect(model.resolvedActionSymbol == EditAction.custom("").symbol)
 
-    model.pinnedPreset = .improve
-    #expect(
-        model.resolvedActionSymbol == EditAction.improve.symbol,
-        "a pin outranks the typed instruction, exactly as the title does")
+    model.selectPreset(at: 1)
+    #expect(model.resolvedActionSymbol == PanelPreset.all[1].action.symbol)
 }
 
-@Test("A pinned preset names itself in the Action cell whatever the Direction says")
+@Test("A selected preset ignores a preserved hidden custom draft")
 @MainActor
-func resolvedActionTitlePrefersThePin() {
+func selectedPresetIgnoresHiddenDraft() {
     let model = PanelModel()
-    model.pinnedPreset = .improve
-    #expect(model.resolvedActionTitle == "Improve")
+    var calls: [(EditAction, String?)] = []
+    model.onPerform = { calls.append(($0, $1)) }
 
+    model.selectCustomInstruction()
     model.instruction = "keep the bullet list"
-    #expect(
-        model.resolvedActionTitle == "Improve",
-        "a pin outranks typing — the typed text becomes guidance, not the action")
-}
-
-@Test("The primary path runs a pinned preset, with the Direction as guidance")
-@MainActor
-func primaryPathRunsThePinnedPreset() {
-    let model = PanelModel()
-    var calls: [(EditAction, String?)] = []
-    model.onPerform = { calls.append(($0, $1)) }
-
-    model.pinnedPreset = .improve
-    model.instruction = "  keep the bullet list  "
+    model.selectPreset(at: 1)
     model.runPrimary()
 
-    #expect(calls.last?.0 == .improve, "the pin selects the action, not the typed text")
-    #expect(calls.last?.1 == "keep the bullet list", "the typed text rides along as guidance")
-}
-
-@Test("Unpinning hands the action back to the Direction field")
-@MainActor
-func unpinningRestoresInstructionRouting() {
-    let model = PanelModel()
-    var calls: [(EditAction, String?)] = []
-    model.onPerform = { calls.append(($0, $1)) }
-
-    model.pinnedPreset = .improve
-    model.pinnedPreset = nil
-    model.instruction = "make it formal"
-    model.runPrimary()
-
-    #expect(calls.last?.0 == .custom("make it formal"))
+    #expect(calls.last?.0 == PanelPreset.all[1].action)
     #expect(calls.last?.1 == nil)
+    #expect(model.instruction == "keep the bullet list", "the draft is preserved for switching back")
+
+    model.selectCustomInstruction()
+    #expect(model.hasCustomInstruction)
 }
 
-@Test("A new session drops the pin, so a preset cannot leak into the next edit")
+@Test("Restoring the default action clears and hides Custom")
 @MainActor
-func resetClearsThePin() {
+func restoreDefaultActionClearsCustom() {
     let model = PanelModel()
-    model.pinnedPreset = .improve
+    model.selectCustomInstruction()
+    model.instruction = "make it formal"
+
+    model.restoreDefaultAction()
+
+    #expect(model.actionChoice == .preset(.improve))
+    #expect(model.instruction.isEmpty)
+    #expect(!model.isCustomInstructionSelected)
+    #expect(model.focusedCell == .none)
+}
+
+@Test("A new session restores the buttons-only Improve default")
+@MainActor
+func resetRestoresDefaultAction() {
+    let model = PanelModel()
+    model.selectCustomInstruction()
+    model.instruction = "make it formal"
 
     model.reset(hasSelection: true, charCount: 12)
 
-    #expect(model.pinnedPreset == nil)
+    #expect(model.actionChoice == .preset(.improve))
     #expect(model.resolvedActionTitle == "Improve")
+    #expect(!model.isCustomInstructionSelected)
+    #expect(model.focusedCell == .none)
 }
 
 // MARK: - Ribbon placement
@@ -1716,29 +1737,81 @@ func resetClearsThePin() {
 private let ribbonScreen = CGRect(x: 0, y: 0, width: 1440, height: 900)
 private let ribbonVisible = CGRect(x: 0, y: 60, width: 1440, height: 815)
 
-@Test("Placement honors a compact preferred width")
-func placementUsesPreferredWidth() {
-    let resolved = RibbonPlacement.resolve(
-        height: 48,
+@Test("Placement honors standard and expanded preferred widths")
+func placementHonorsPreferredWidth() {
+    #expect(RibbonPlacement.standardWidth == 558)
+    let standard = RibbonPlacement.resolve(
+        height: 56,
         in: .init(
-            screenFrame: ribbonScreen,
-            visibleFrame: ribbonVisible,
-            preferredWidth: RibbonPlacement.compactWidth))
+            screenFrame: ribbonScreen, visibleFrame: ribbonVisible,
+            preferredWidth: RibbonPlacement.standardWidth))
+    let expanded = RibbonPlacement.resolve(
+        height: 56,
+        in: .init(
+            screenFrame: ribbonScreen, visibleFrame: ribbonVisible,
+            preferredWidth: RibbonPlacement.maximumWidth))
 
-    #expect(resolved.frame.width == RibbonPlacement.compactWidth)
+    #expect(standard.frame.width == RibbonPlacement.standardWidth)
+    #expect(expanded.frame.width == RibbonPlacement.maximumWidth)
+    #expect(standard.frame.midX == expanded.frame.midX)
+    #expect(standard.anchor == expanded.anchor)
 }
 
-@Test("Expanded snippets width follows visible keys")
-func snippetsWidthIncludesVisibleButtons() {
-    let one = RibbonPlacement.snippetsWidth(titles: ["My ID"])
-    let populated = RibbonPlacement.snippetsWidth(titles: ["My ID", "Office code"])
+@Test("Preferred width also applies beside a selection")
+func placementHonorsPreferredWidthBesideSelection() {
+    let wideSelection = CGRect(x: 200, y: 500, width: 1_000, height: 16)
+    let standardEnd = RibbonPlacement.resolve(
+        height: 56,
+        in: .init(
+            screenFrame: ribbonScreen, visibleFrame: ribbonVisible,
+            selectionRect: wideSelection,
+            preferredWidth: RibbonPlacement.standardWidth))
+    let tallSelection = CGRect(x: 300, y: 100, width: 200, height: 700)
+    let standardMargin = RibbonPlacement.resolve(
+        height: 56,
+        in: .init(
+            screenFrame: ribbonScreen, visibleFrame: ribbonVisible,
+            selectionRect: tallSelection,
+            preferredWidth: RibbonPlacement.standardWidth))
 
-    #expect(populated > one)
-    #expect(RibbonPlacement.compactSnippetWidth(for: "ID")
-        == RibbonPlacement.compactSnippetMinWidth)
-    #expect(RibbonPlacement.compactSnippetWidth(for: String(repeating: "x", count: 100))
-        == RibbonPlacement.compactSnippetMaxWidth)
-    #expect(RibbonPlacement.compactSnippetWidth(for: "My ID") > 70)
+    #expect(standardEnd.anchor == .belowSelection)
+    #expect(standardEnd.frame.width == RibbonPlacement.standardWidth)
+    #expect(standardMargin.anchor == .rightOfSelection)
+    #expect(standardMargin.frame.width == RibbonPlacement.standardWidth)
+}
+
+@Test("Preferred width stays inside placement's safe bounds")
+func placementClampsPreferredWidth() {
+    let belowMinimum = RibbonPlacement.resolve(
+        height: 56,
+        in: .init(
+            screenFrame: ribbonScreen, visibleFrame: ribbonVisible,
+            preferredWidth: 200))
+    let aboveMaximum = RibbonPlacement.resolve(
+        height: 56,
+        in: .init(
+            screenFrame: ribbonScreen, visibleFrame: ribbonVisible,
+            preferredWidth: 2_000))
+
+    #expect(belowMinimum.frame.width == RibbonPlacement.minimumWidth)
+    #expect(aboveMaximum.frame.width == RibbonPlacement.maximumWidth)
+}
+
+@Test("Expanded Custom width ignores a narrow host")
+func placementKeepsExpandedCustomWidth() {
+    let host = CGRect(x: 300, y: 200, width: 420, height: 400)
+    let resolved = RibbonPlacement.resolve(
+        height: 56,
+        in: .init(
+            screenFrame: ribbonScreen,
+            visibleFrame: ribbonScreen,
+            hostWindowFrame: host,
+            preferredWidth: RibbonPlacement.expandedWidth,
+            minimumContentWidth: RibbonPlacement.expandedWidth))
+
+    #expect(resolved.anchor == .hostWindow)
+    #expect(resolved.frame.width == RibbonPlacement.expandedWidth)
+    #expect(resolved.frame.midX == host.midX)
 }
 
 @Test("A reserved menu-bar strip anchors the lane flush under the menu bar")
@@ -1995,6 +2068,97 @@ func placementFollowsAClearSelection() {
     #expect(resolved.frame.maxY == selection.minY - RibbonPlacement.selectionClearance)
 }
 
+@Test("A selection-anchored lane spans the selection, not the window around it")
+func placementSpansTheSelectionNotTheHostWindow() {
+    let screen = CGRect(x: 0, y: 0, width: 2560, height: 1440)
+    let visible = CGRect(x: 0, y: 0, width: 2560, height: 1410)
+    // A window three times the width of the text selected inside it: centering
+    // the lane on the window would put it half a screen from the words.
+    let host = CGRect(x: 0, y: 0, width: 2560, height: 1410)
+    let selection = CGRect(x: 1800, y: 793, width: 354, height: 16)
+    let resolved = RibbonPlacement.resolve(
+        height: 48,
+        in: .init(
+            screenFrame: screen, visibleFrame: visible,
+            hostWindowFrame: host, selectionRect: selection))
+
+    #expect(resolved.anchor == .belowSelection)
+    #expect(resolved.frame.midX == selection.midX, "the span is what the lane is centered on")
+    #expect(
+        resolved.frame.width == RibbonPlacement.minimumWidth,
+        "a span narrower than the row needs still gets a legible row, not a window-wide one")
+}
+
+@Test("A selection near the screen edge keeps its lane on the display")
+func placementClampsASelectionAnchoredLaneToTheScreen() {
+    let screen = CGRect(x: 0, y: 0, width: 2560, height: 1440)
+    let visible = CGRect(x: 0, y: 0, width: 2560, height: 1410)
+    let host = CGRect(x: 1964, y: 402, width: 673, height: 439)
+    let selection = CGRect(x: 2200, y: 793, width: 340, height: 16)
+    let resolved = RibbonPlacement.resolve(
+        height: 48,
+        in: .init(
+            screenFrame: screen, visibleFrame: visible,
+            hostWindowFrame: host, selectionRect: selection))
+
+    #expect(resolved.anchor == .belowSelection)
+    #expect(resolved.frame.maxX == screen.maxX, "centering alone would hang it off the right edge")
+    #expect(
+        resolved.frame.maxX > selection.minX && resolved.frame.minX < selection.maxX,
+        "the lane must remain horizontally adjacent to the selected text")
+}
+
+@Test("A wide selection widens the lane, up to the cap")
+func placementWidensTheLaneToTheSelection() {
+    let selection = CGRect(x: 300, y: 500, width: 760, height: 16)
+    let resolved = RibbonPlacement.resolve(
+        height: 56,
+        in: .init(
+            screenFrame: ribbonScreen, visibleFrame: ribbonVisible, selectionRect: selection))
+
+    #expect(resolved.anchor == .belowSelection)
+    #expect(
+        resolved.frame.width == selection.width + 2 * RibbonPlacement.selectionClearance,
+        "the lane spans the words it is about to rewrite")
+    #expect(resolved.frame.midX == selection.midX)
+}
+
+@Test("A selection wider than the cap does not widen the lane past it")
+func placementCapsAWideSelectionsLane() {
+    let selection = CGRect(x: 100, y: 500, width: 1200, height: 16)
+    let resolved = RibbonPlacement.resolve(
+        height: 56,
+        in: .init(
+            screenFrame: ribbonScreen, visibleFrame: ribbonVisible, selectionRect: selection))
+
+    #expect(resolved.frame.width == RibbonPlacement.maximumWidth)
+    #expect(resolved.frame.midX == selection.midX, "still centered on the span it edits")
+}
+
+@Test("A small host window neither shrinks the lane nor bounds the room beside the text")
+func placementIgnoresASmallHostWindowBesideTheSelection() {
+    // A short window on a large display, its menu bar auto-hidden so the host
+    // window is what the resting anchor would hang from. The old rule measured
+    // the room at the selection's ends against that window's own edges, so a
+    // selection near its foot was pushed above the words even though the
+    // display below them was empty.
+    let host = CGRect(x: 400, y: 300, width: 340, height: 260)
+    let selection = CGRect(x: 500, y: 320, width: 200, height: 16)
+    let resolved = RibbonPlacement.resolve(
+        height: 56,
+        in: .init(
+            screenFrame: ribbonScreen, visibleFrame: ribbonScreen,
+            hostWindowFrame: host, menuBarHidden: true, selectionRect: selection))
+
+    #expect(resolved.anchor == .belowSelection, "there is room on the display, whatever the window says")
+    #expect(
+        resolved.frame.maxY == selection.minY - RibbonPlacement.selectionClearance,
+        "the lane floats over its host; it is not clipped to it")
+    #expect(resolved.frame.minY < host.minY, "so it may hang past the window's foot to stay with the words")
+    #expect(resolved.frame.width == RibbonPlacement.minimumWidth, "and it is not squeezed to the window")
+    #expect(resolved.frame.midX == selection.midX)
+}
+
 @Test("A caret is not a selection, so the lane takes its predictable place")
 func placementIgnoresACaret() {
     let caret = CGRect(x: 20, y: 840, width: 0, height: 14)
@@ -2041,9 +2205,146 @@ func placementJudgesRoomAtTheHeightItWillGrowTo() {
     #expect(resolved.anchor == .aboveSelection, "but the review gate would not, and the choice is made once")
 }
 
+// MARK: - Ribbon placement: standing in the margin
+
+/// A paragraph selected in a column of text: 670pt tall, so neither end of it
+/// can hold a grown lane, and 520pt wide, so the display has margin to spare
+/// either side. The case the rule used to answer by trekking to the menu bar.
+private let tallSelection = CGRect(x: 80, y: 150, width: 520, height: 670)
+
+@Test("A selection too tall for either end puts the lane in the margin beside it")
+func placementStandsInTheMarginOfATallSelection() {
+    let resolved = RibbonPlacement.resolve(
+        height: 56,
+        in: .init(
+            screenFrame: ribbonScreen, visibleFrame: ribbonVisible,
+            selectionRect: tallSelection))
+
+    #expect(resolved.anchor == .rightOfSelection, "the roomier flank of the two")
+    #expect(!resolved.frame.intersects(tallSelection), "a lane in the margin covers nothing at all")
+    #expect(
+        resolved.frame.minX == tallSelection.maxX + RibbonPlacement.selectionClearance,
+        "flush against the flank, one clearance short of touching it")
+    #expect(resolved.frame.midY == tallSelection.midY, "level with the middle of the block, where the eye is")
+    #expect(resolved.frame.maxX <= ribbonVisible.maxX, "and inside the band it was measured against")
+}
+
+@Test("The lane takes the roomier flank, not always the same one")
+func placementPrefersTheRoomierFlank() {
+    // The same block, moved to the right of the display: now the margin is on
+    // the other side of it.
+    let selection = CGRect(x: 800, y: 150, width: 560, height: 670)
+    let resolved = RibbonPlacement.resolve(
+        height: 56,
+        in: .init(
+            screenFrame: ribbonScreen, visibleFrame: ribbonVisible, selectionRect: selection))
+
+    #expect(resolved.anchor == .leftOfSelection)
+    #expect(!resolved.frame.intersects(selection))
+    #expect(resolved.frame.maxX == selection.minX - RibbonPlacement.selectionClearance)
+}
+
+@Test("The compact ribbon fits a 560pt margin")
+func placementUsesAMarginWideEnoughForTheCompactRibbon() {
+    // The old 600pt ribbon could not stand here; the compact strip can.
+    let selection = CGRect(x: 420, y: 150, width: 452, height: 670)
+    let resolved = RibbonPlacement.resolve(
+        height: 56,
+        in: .init(
+            screenFrame: ribbonScreen, visibleFrame: ribbonVisible, selectionRect: selection))
+
+    #expect(resolved.anchor == .rightOfSelection)
+    #expect(resolved.frame.minX == selection.maxX + RibbonPlacement.selectionClearance)
+    #expect(resolved.frame.maxX == ribbonVisible.maxX)
+}
+
+@Test("Margins are measured on the display, not on the host window")
+func placementMeasuresMarginsOnTheDisplay() {
+    // A window hanging off the left edge of the display, with a tall block
+    // selected in it. The margin that matters is the one on screen beside the
+    // words, not the part of the window nobody can see.
+    let host = CGRect(x: -400, y: 0, width: 1440, height: 900)
+    let selection = CGRect(x: 500, y: 150, width: 100, height: 670)
+    let resolved = RibbonPlacement.resolve(
+        height: 56,
+        in: .init(
+            screenFrame: ribbonScreen, visibleFrame: ribbonScreen,
+            hostWindowFrame: host, menuBarHidden: true, selectionRect: selection))
+
+    #expect(
+        resolved.anchor == .rightOfSelection,
+        "832pt of display beside the block, whatever the window's own edge says")
+    #expect(!resolved.frame.intersects(selection), "screen clamping must not move the lane across the words")
+    #expect(resolved.frame.minX == selection.maxX + RibbonPlacement.selectionClearance)
+    #expect(resolved.frame.maxX <= ribbonScreen.maxX, "and it stays on the display")
+}
+
+@Test("A lane in the margin keeps its clearance as it grows")
+func placementMarginLaneGrowsWithoutReachingTheText() {
+    // The review gate has opened on a lane standing beside the block.
+    let context = RibbonPlacement.Context(
+        screenFrame: ribbonScreen, visibleFrame: ribbonVisible,
+        selectionRect: tallSelection, establishedAnchor: .rightOfSelection)
+    let resolved = RibbonPlacement.resolve(height: 260, in: context)
+
+    #expect(resolved.anchor == .rightOfSelection)
+    #expect(!resolved.frame.intersects(tallSelection), "the pinned edge is the one facing the words")
+    #expect(resolved.frame.minX == tallSelection.maxX + RibbonPlacement.selectionClearance)
+    #expect(resolved.frame.minY >= ribbonVisible.minY, "and it stays inside the band while it grows")
+}
+
+@Test("A lane in the margin is only as wide as the margin can hold")
+func placementMarginLaneFitsTheMarginItStandsIn() {
+    // 700pt of margin to the right: wider than the lane's minimum, narrower
+    // than its cap, so the lane takes the margin exactly.
+    let selection = CGRect(x: 20, y: 150, width: 712, height: 670)
+    let resolved = RibbonPlacement.resolve(
+        height: 56,
+        in: .init(
+            screenFrame: ribbonScreen, visibleFrame: ribbonVisible, selectionRect: selection))
+
+    #expect(resolved.anchor == .rightOfSelection)
+    #expect(resolved.frame.width == 700, "a lane wider than its margin would reach back over the text")
+    #expect(resolved.frame.maxX == ribbonVisible.maxX)
+}
+
+// MARK: - Ribbon placement: the cramped end
+
+@Test("A block spanning the host settles at its roomier end rather than trekking to the top")
+func placementTakesTheRoomierEndWhenNoMarginIsLeft() {
+    // Full width and 500pt tall: no margin either side, and neither end can
+    // hold a grown lane. The old rule sent the lane to the menu bar, which
+    // covered the head of the very block it was invoked on.
+    let selection = CGRect(x: 0, y: 200, width: 1440, height: 500)
+    let resolved = RibbonPlacement.resolve(
+        height: 56,
+        in: .init(
+            screenFrame: ribbonScreen, visibleFrame: ribbonVisible, selectionRect: selection))
+
+    #expect(resolved.anchor == .aboveSelection, "167pt above beats 132pt below")
+    #expect(!resolved.frame.intersects(selection), "the lane as it opens still stands clear of the words")
+    #expect(resolved.frame.minY == selection.maxY + RibbonPlacement.selectionClearance)
+    #expect(
+        resolved.frame.maxY < ribbonVisible.maxY - 100,
+        "and nowhere near the menu bar, which is where it used to go")
+}
+
+@Test("The cramped end is chosen by room, so a block low on the screen sits under it")
+func placementTakesTheCrampedEndWithTheMostRoom() {
+    let selection = CGRect(x: 0, y: 250, width: 1440, height: 450)
+    let resolved = RibbonPlacement.resolve(
+        height: 56,
+        in: .init(
+            screenFrame: ribbonScreen, visibleFrame: ribbonVisible, selectionRect: selection))
+
+    #expect(resolved.anchor == .belowSelection, "182pt below beats 167pt above")
+    #expect(resolved.frame.maxY == selection.minY - RibbonPlacement.selectionClearance)
+}
+
 @Test("A selection with nowhere beside it keeps the predictable position")
 func placementKeepsItsPlaceWhenNeitherSideFits() {
-    // Everything on screen selected: any move covers it just as thoroughly.
+    // Everything on screen selected: no end, no margin, and any move covers it
+    // just as thoroughly as any other.
     let resolved = RibbonPlacement.resolve(
         height: 56,
         in: .init(
@@ -2099,70 +2400,24 @@ func placementSitsUnderTheSelectionWithinAFullScreenHost() {
     #expect(resolved.frame.maxY == selection.minY - RibbonPlacement.selectionClearance)
 }
 
-@Test("Without a pointer, a lane sitting against the selection centers on its host")
-func placementWithoutPointerCentersOnTheHost() {
+@Test("A lane sitting against the selection follows it sideways too")
+func placementFollowsTheSelectionSideways() {
     let resting = RibbonPlacement.resolve(
         height: 56,
         in: .init(screenFrame: ribbonScreen, visibleFrame: ribbonVisible))
+    // The same display, with a span selected well to the right of center.
+    let selection = CGRect(x: 900, y: 600, width: 300, height: 16)
     let beside = RibbonPlacement.resolve(
         height: 56,
         in: .init(
             screenFrame: ribbonScreen, visibleFrame: ribbonVisible,
-            selectionRect: selectionUnderTheMenuBar))
+            selectionRect: selection))
 
-    #expect(beside.frame.minX == resting.frame.minX, "vertical position follows the selection; horizontal does not")
-    #expect(beside.frame.width == resting.frame.width)
-}
-
-@Test("The lane opens below and centers on the captured pointer")
-func placementFollowsThePointer() {
-    let pointer = CGPoint(x: 720, y: 500)
-    let resolved = RibbonPlacement.resolve(
-        height: 56,
-        in: .init(
-            screenFrame: ribbonScreen, visibleFrame: ribbonVisible,
-            selectionRect: selectionUnderTheMenuBar,
-            pointerLocation: pointer))
-
-    #expect(resolved.frame.midX == pointer.x)
-    #expect(resolved.anchor == .belowPointer)
-    #expect(resolved.frame.maxY == pointer.y - RibbonPlacement.pointerClearance)
-}
-
-@Test("Pointer-relative placement stays fully on screen")
-func placementNearThePointerClampsAtScreenEdges() {
-    let resolved = RibbonPlacement.resolve(
-        height: 56,
-        in: .init(
-            screenFrame: ribbonScreen, visibleFrame: ribbonVisible,
-            pointerLocation: CGPoint(x: ribbonScreen.maxX - 5, y: 500)))
-
-    #expect(resolved.frame.maxX == ribbonScreen.maxX)
-    #expect(resolved.frame.maxY == 500 - RibbonPlacement.pointerClearance)
-}
-
-@Test("The lane opens above a pointer near the bottom of the screen")
-func placementOpensAboveLowPointer() {
-    let pointer = CGPoint(x: 320, y: ribbonVisible.minY + 20)
-    let resolved = RibbonPlacement.resolve(
-        height: 56,
-        in: .init(
-            screenFrame: ribbonScreen, visibleFrame: ribbonVisible,
-            pointerLocation: pointer))
-
-    #expect(resolved.anchor == .abovePointer)
-    #expect(resolved.frame.minY == pointer.y + RibbonPlacement.pointerClearance)
-}
-
-@Test("A pointer on another display does not pull the lane sideways")
-func placementIgnoresPointerOutsideTargetScreen() {
-    let resolved = RibbonPlacement.resolve(
-        height: 56,
-        in: .init(
-            screenFrame: ribbonScreen, visibleFrame: ribbonVisible,
-            pointerLocation: CGPoint(x: ribbonScreen.maxX + 100, y: 500)))
-
-    #expect(resolved.frame.midX == ribbonVisible.midX)
+    #expect(beside.frame.midX == selection.midX, "both axes follow the selection")
+    #expect(beside.frame.minX != resting.frame.minX, "which is not where the resting lane would be")
+    #expect(
+        resting.frame.midX == ribbonVisible.midX,
+        "and with nothing selected the resting lane is still screen-centered")
 }
 
 // MARK: - Ribbon placement: stepping off the applied text
@@ -2233,4 +2488,428 @@ func longerResultReopensTheAnchor() {
 
     #expect(!dodged.frame.intersects(updated!), "the lane steps off the words it just wrote")
     #expect(dodged.anchor == .belowSelection, "and sits back against them from the near side")
+}
+
+// MARK: - App version
+
+@Test("The version comes from the bundle, never a Swift literal")
+func appVersionReadsBundleInfo() {
+    #expect(AppVersion.short(from: ["CFBundleShortVersionString": "1.2.3"]) == "1.2.3")
+    // Unbundled (`swift run Mancia`) has no Info.plist to read.
+    #expect(AppVersion.short(from: nil) == AppVersion.unbundled)
+    #expect(AppVersion.short(from: [:]) == AppVersion.unbundled)
+    // A blank value is missing, not a version.
+    #expect(AppVersion.short(from: ["CFBundleShortVersionString": "   "]) == AppVersion.unbundled)
+    #expect(AppVersion.short(from: ["CFBundleShortVersionString": 3]) == AppVersion.unbundled)
+    // The fallback must never look like a release.
+    #expect(AppVersion.unbundled.rangeOfCharacter(from: .decimalDigits) == nil)
+}
+
+@Test("The About string shows the build number only when it differs")
+func appVersionDisplayString() {
+    #expect(
+        AppVersion.displayString(
+            from: ["CFBundleShortVersionString": "0.2.2", "CFBundleVersion": "0.2.2"]) == "0.2.2",
+        "a matching build number is noise")
+    #expect(
+        AppVersion.displayString(
+            from: ["CFBundleShortVersionString": "0.2.2", "CFBundleVersion": "17"]) == "0.2.2 (17)")
+    #expect(
+        AppVersion.displayString(from: ["CFBundleShortVersionString": "0.2.2"]) == "0.2.2")
+}
+
+@Test("The About panel carries the bundle version, not a hardcoded one")
+@MainActor
+func aboutPanelOptionsUseBundleVersion() {
+    let options = AboutPanel.options(
+        info: ["CFBundleShortVersionString": "9.9.9", "CFBundleVersion": "9.9.9"], icon: nil)
+    #expect(options[.applicationName] as? String == "Mancia")
+    #expect(options[.applicationVersion] as? String == "9.9.9")
+    #expect(options[.applicationIcon] == nil, "a missing icon is omitted, not faked")
+}
+
+@Test("The About diagnostic reads visible nested panel text")
+@MainActor
+func aboutPanelDisplayedText() {
+    let root = NSView()
+    let container = NSView()
+    container.addSubview(NSTextField(labelWithString: "Version 9.9.9"))
+    container.addSubview(NSTextField(labelWithString: "Copyright"))
+    root.addSubview(container)
+
+    let hidden = NSTextField(labelWithString: "stale 0.1.0")
+    hidden.isHidden = true
+    root.addSubview(hidden)
+
+    let panel = NSPanel()
+    panel.contentView = root
+
+    #expect(AboutPanel.displayedText(in: panel) == ["Version 9.9.9", "Copyright"])
+}
+
+/// `Support/Info.plist` is the one place a version number lives. These guard
+/// the sync: the release workflow rewrites both plist keys from the git tag,
+/// and the release commit bumps the changelog to the same number.
+@Test("Support/Info.plist keeps its two version keys in step")
+func infoPlistVersionKeysAgree() throws {
+    let info = try repoInfoPlist()
+    let short = try #require(info["CFBundleShortVersionString"] as? String)
+    let build = try #require(info["CFBundleVersion"] as? String)
+    #expect(short == build, "CFBundleShortVersionString and CFBundleVersion have drifted")
+}
+
+@Test("The changelog's newest release matches the bundle version")
+func changelogMatchesInfoPlist() throws {
+    let info = try repoInfoPlist()
+    let short = try #require(info["CFBundleShortVersionString"] as? String)
+    let changelog = try String(contentsOf: repoRoot.appending(path: "CHANGELOG.md"), encoding: .utf8)
+    // The first `## [x.y.z]` heading, skipping `## [Unreleased]`.
+    let newest = changelog
+        .split(separator: "\n")
+        .compactMap { line -> String? in
+            guard line.hasPrefix("## ["), let close = line.firstIndex(of: "]") else { return nil }
+            let name = String(line[line.index(line.startIndex, offsetBy: 4)..<close])
+            return name == "Unreleased" ? nil : name
+        }
+        .first
+    #expect(newest == short, "CHANGELOG.md's newest release should be the bundled version")
+}
+
+private var repoRoot: URL {
+    URL(filePath: #filePath)  // Tests/ManciaTests/ManciaTests.swift
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+}
+
+private func repoInfoPlist() throws -> [String: Any] {
+    let url = repoRoot.appending(path: "Support/Info.plist")
+    let data = try Data(contentsOf: url)
+    let parsed = try PropertyListSerialization.propertyList(from: data, format: nil)
+    return parsed as? [String: Any] ?? [:]
+}
+
+// MARK: - Edit session rules
+
+private let sessionOwnPid: pid_t = 99
+private let sessionHostPid: pid_t = 501
+private let sessionOtherPid: pid_t = 777
+
+private func startedSession(
+    capturedText: String? = "original", targetPid: pid_t = sessionHostPid
+) -> EditSession {
+    var session = EditSession(ownPid: sessionOwnPid)
+    session.begin(capturedText: capturedText, targetPid: targetPid)
+    return session
+}
+
+/// Drive a resolution and return every step it took, so the *order* of the
+/// probes is asserted rather than just the answer they arrive at.
+private func sessionSteps(
+    _ session: inout EditSession, _ observations: [EditSession.Observation]
+) -> [EditSession.Step] {
+    observations.map { session.next(after: $0) }
+}
+
+private func liveRun(
+    _ text: String, adopted: Bool = true, committedTarget: Bool = false
+) -> EditSession.Step {
+    .run(.init(
+        text: text, strategy: .liveSelection,
+        adoptedSelection: adopted, committedNewTarget: committedTarget))
+}
+
+@Test("The frontmost app is checked ahead of both scope branches")
+func sessionChecksFrontmostBeforeScope() {
+    var selection = startedSession()
+    #expect(selection.next(after: .start(scope: .selection, hasSelection: true)) == .probeFrontmost)
+
+    var document = startedSession(capturedText: nil)
+    #expect(document.next(after: .start(scope: .document, hasSelection: false)) == .probeFrontmost)
+}
+
+@Test("Only a live selection re-targets to the app the user moved to")
+func sessionRetargetsOnlyOnALiveSelection() {
+    var adopted = startedSession()
+    #expect(sessionSteps(&adopted, [
+        .start(scope: .selection, hasSelection: true),
+        .frontmost(pid: sessionOtherPid),
+        .newTarget(text: "over here", pid: sessionOtherPid),
+    ]) == [.probeFrontmost, .captureNewTarget, liveRun("over here", committedTarget: true)])
+
+    // Nothing selected in the new app is no evidence about what to edit, so the
+    // session stays on the text it opened against.
+    var declined = startedSession()
+    #expect(sessionSteps(&declined, [
+        .start(scope: .selection, hasSelection: true),
+        .frontmost(pid: sessionOtherPid),
+        .newTarget(text: nil, pid: sessionOtherPid),
+    ]) == [.probeFrontmost, .captureNewTarget, liveRun("original", adopted: false)])
+
+    var empty = startedSession()
+    #expect(sessionSteps(&empty, [
+        .start(scope: .selection, hasSelection: true),
+        .frontmost(pid: sessionOtherPid),
+        .newTarget(text: "", pid: sessionOtherPid),
+    ]).last == liveRun("original", adopted: false))
+}
+
+@Test("Re-targeting clears the history, so no undo can reach the new app")
+func sessionRetargetClearsHistory() {
+    var session = startedSession()
+    session.recordApplied(output: "v1", baseline: "original")
+    session.recordApplied(output: "v2", baseline: "v1")
+    #expect(session.versionCount == 3)
+
+    let steps = sessionSteps(&session, [
+        .start(scope: .selection, hasSelection: true),
+        .frontmost(pid: sessionOtherPid),
+        .newTarget(text: "elsewhere", pid: sessionOtherPid),
+    ])
+
+    #expect(steps.last == liveRun("elsewhere", committedTarget: true))
+    #expect(session.versions == ["elsewhere"], "history describes edits made in the old app")
+    // The danger this guards: ⌘Z posted into an app Mancia never pasted into
+    // would undo an edit of the user's own.
+    guard case .run(let run)? = steps.last else { return #expect(Bool(false)) }
+    #expect(run.strategy != .undoThenPaste)
+}
+
+@Test("Mancia's own pid never re-targets the session onto itself")
+func sessionNeverRetargetsOntoItself() {
+    var session = startedSession()
+    // ⌘, and the permission alert both make Mancia frontmost mid-session.
+    #expect(sessionSteps(&session, [
+        .start(scope: .selection, hasSelection: true),
+        .frontmost(pid: sessionOwnPid),
+    ]) == [.probeFrontmost, liveRun("original", adopted: false)])
+
+    // The session's own target is likewise not a move.
+    var same = startedSession()
+    #expect(sessionSteps(&same, [
+        .start(scope: .selection, hasSelection: true),
+        .frontmost(pid: sessionHostPid),
+    ]).last == liveRun("original", adopted: false))
+}
+
+@Test("Document scope with nothing selected probes for a selection before ⌘A")
+func sessionDocumentScopeProbesForSelectionFirst() {
+    var promoted = startedSession(capturedText: nil)
+    #expect(sessionSteps(&promoted, [
+        .start(scope: .document, hasSelection: false),
+        .frontmost(pid: sessionHostPid),
+        .freshSelection("just selected"),
+    ]) == [.probeFrontmost, .probeFreshSelection, liveRun("just selected")])
+    #expect(promoted.versions == ["just selected"])
+
+    // Still nothing selected: fall back to the whole document.
+    var fallback = startedSession(capturedText: nil)
+    #expect(sessionSteps(&fallback, [
+        .start(scope: .document, hasSelection: false),
+        .frontmost(pid: sessionHostPid),
+        .freshSelection(nil),
+    ]) == [.probeFrontmost, .probeFreshSelection, .captureDocument])
+
+    // A session that already knows it has a selection goes straight to ⌘A.
+    var direct = startedSession()
+    #expect(sessionSteps(&direct, [
+        .start(scope: .document, hasSelection: true),
+        .frontmost(pid: sessionHostPid),
+    ]) == [.probeFrontmost, .captureDocument])
+}
+
+@Test("A manual edit between document cycles becomes the new baseline")
+func sessionDocumentScopeAdoptsManualEdits() {
+    var session = startedSession()
+    session.recordApplied(output: "generated", baseline: "original")
+    #expect(session.versions == ["original", "generated"])
+
+    var edited = session
+    #expect(sessionSteps(&edited, [
+        .start(scope: .document, hasSelection: true),
+        .frontmost(pid: sessionHostPid),
+        .document("the user typed over it"),
+    ]).last == .run(.init(
+        text: "the user typed over it", strategy: .entireDocument,
+        adoptedSelection: false, committedNewTarget: false)))
+    #expect(edited.versions == ["the user typed over it"], "a manual edit restarts the history")
+
+    // Unchanged text leaves the history alone.
+    var untouched = session
+    #expect(sessionSteps(&untouched, [
+        .start(scope: .document, hasSelection: true),
+        .frontmost(pid: sessionHostPid),
+        .document("generated"),
+    ]).last?.isRun == true)
+    #expect(untouched.versions == ["original", "generated"])
+}
+
+@Test("A fresh selection is adopted even when identical to the last result")
+func sessionAdoptsIdenticalFreshSelection() {
+    var session = startedSession()
+    session.recordApplied(output: "same words", baseline: "original")
+
+    let steps = sessionSteps(&session, [
+        .start(scope: .selection, hasSelection: true),
+        .frontmost(pid: sessionHostPid),
+        .freshSelection("same words"),
+    ])
+
+    // Adoption is unconditional and ahead of the baseline check: the same text
+    // can have been re-selected somewhere else, and the Target chip has to
+    // describe the span this run will actually send.
+    #expect(steps.last == liveRun("same words"))
+    #expect(session.versions == ["original", "same words"], "identical text is not a new baseline")
+
+    // Genuinely different text does restart the baseline.
+    var moved = startedSession()
+    moved.recordApplied(output: "same words", baseline: "original")
+    #expect(sessionSteps(&moved, [
+        .start(scope: .selection, hasSelection: true),
+        .frontmost(pid: sessionHostPid),
+        .freshSelection("a different sentence"),
+    ]).last == liveRun("a different sentence"))
+    #expect(moved.versions == ["a different sentence"])
+}
+
+@Test("The first selection cycle pastes over the live selection, later ones undo first")
+func sessionSelectionStrategyFollowsTheCycle() {
+    var first = startedSession()
+    #expect(sessionSteps(&first, [
+        .start(scope: .selection, hasSelection: true),
+        .frontmost(pid: sessionHostPid),
+    ]).last == liveRun("original", adopted: false), "the original selection is still live")
+
+    var later = startedSession()
+    later.recordApplied(output: "v1", baseline: "original")
+    #expect(sessionSteps(&later, [
+        .start(scope: .selection, hasSelection: true),
+        .frontmost(pid: sessionHostPid),
+        .freshSelection(nil),
+    ]) == [.probeFrontmost, .probeFreshSelection, .run(.init(
+        text: "v1", strategy: .undoThenPaste,
+        adoptedSelection: false, committedNewTarget: false))],
+    "exactly one paste stays outstanding")
+}
+
+@Test("Recording an applied result drops any forward history")
+func sessionRecordAppliedTruncatesForwardHistory() {
+    var session = startedSession()
+    session.recordApplied(output: "v1", baseline: "original")
+    session.recordApplied(output: "v2", baseline: "v1")
+    #expect(session.versions == ["original", "v1", "v2"])
+    #expect(session.currentIndex == 2)
+
+    _ = session.navigate(to: 1, scope: .selection)
+    session.recordApplied(output: "v3", baseline: "v1")
+    #expect(session.versions == ["original", "v1", "v3"])
+    #expect(session.currentIndex == 2)
+
+    // A first result seeds the original from the baseline it replaced.
+    var seeded = startedSession()
+    seeded.recordApplied(output: "only", baseline: "the original text")
+    #expect(seeded.versions == ["the original text", "only"])
+}
+
+@Test("Navigation strategy follows the scope, including back to index 0")
+func sessionNavigationStrategyFollowsScope() {
+    var session = startedSession()
+    session.recordApplied(output: "v1", baseline: "original")
+    session.recordApplied(output: "v2", baseline: "v1")
+
+    // Selection scope always undoes first, index 0 included, so exactly one
+    // paste stays outstanding.
+    #expect(session.navigate(to: 0, scope: .selection)?.strategy == .undoThenPaste)
+    #expect(session.currentIndex == 0)
+    #expect(session.navigate(to: 2, scope: .document)?.strategy == .entireDocument)
+    #expect(session.navigate(to: 1, scope: .selection)?.text == "v1")
+
+    // Nowhere to go.
+    #expect(session.navigate(to: 1, scope: .selection) == nil, "already there")
+    #expect(session.navigate(to: -1, scope: .selection) == nil)
+    #expect(session.navigate(to: 3, scope: .selection) == nil)
+    #expect(session.currentIndex == 1, "a refused move leaves the position alone")
+}
+
+@Test("Nothing to edit aborts rather than sending empty text")
+func sessionAbortsWithNothingToEdit() {
+    var noCapture = startedSession(capturedText: nil)
+    #expect(sessionSteps(&noCapture, [
+        .start(scope: .selection, hasSelection: true),
+        .frontmost(pid: sessionHostPid),
+    ]).last == .abort)
+
+    var emptyCapture = startedSession(capturedText: "")
+    #expect(sessionSteps(&emptyCapture, [
+        .start(scope: .selection, hasSelection: true),
+        .frontmost(pid: sessionHostPid),
+    ]).last == .abort)
+
+    for empty: String? in [nil, ""] {
+        var document = startedSession()
+        #expect(sessionSteps(&document, [
+            .start(scope: .document, hasSelection: true),
+            .frontmost(pid: sessionHostPid),
+            .document(empty),
+        ]).last == .abort)
+    }
+}
+
+@Test("Every resolution reaches a run or an abort, whatever the target reports")
+func sessionResolutionAlwaysTerminates() {
+    let answers: [String?] = [nil, "", "text"]
+    let pids: [pid_t?] = [nil, sessionHostPid, sessionOtherPid, sessionOwnPid]
+
+    for scope in [EditSession.Scope.selection, .document] {
+        for hasSelection in [true, false] {
+            for captured in answers {
+                for frontmost in pids {
+                    for newTarget in answers {
+                        for fresh in answers {
+                            for document in answers {
+                                var session = startedSession(capturedText: captured)
+                                session.recordApplied(output: "v1", baseline: "seed")
+                                var observation = EditSession.Observation
+                                    .start(scope: scope, hasSelection: hasSelection)
+                                var taken = 0
+                                var finished = false
+                                while taken < 8, !finished {
+                                    taken += 1
+                                    switch session.next(after: observation) {
+                                    case .probeFrontmost:
+                                        observation = .frontmost(pid: frontmost)
+                                    case .captureNewTarget:
+                                        observation = .newTarget(text: newTarget, pid: sessionOtherPid)
+                                    case .probeFreshSelection:
+                                        observation = .freshSelection(fresh)
+                                    case .captureDocument:
+                                        observation = .document(document)
+                                    case .run, .abort:
+                                        finished = true
+                                    }
+                                }
+                                #expect(finished, """
+                                    never settled — scope \(scope), hasSelection \(hasSelection), \
+                                    captured \(String(describing: captured)), \
+                                    frontmost \(String(describing: frontmost))
+                                    """)
+                                // The longest legitimate path: probe the
+                                // frontmost app, capture a new target that
+                                // turns out to hold no selection, probe for a
+                                // fresh selection, fall back to ⌘A, then run.
+                                #expect(taken <= 5, "a cycle should never need more than five steps")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private extension EditSession.Step {
+    var isRun: Bool {
+        if case .run = self { return true }
+        return false
+    }
 }

@@ -4,19 +4,26 @@ import Observation
 /// Observable state shared between the panel view and the coordinator that
 /// drives it. The coordinator wires the closures; the view calls them.
 ///
-/// The panel is a cyclical edit session: Oops and snippet keys stay immediate, while Smart Edit
-/// discloses the provider-backed controls for the rest of the session. Once
-/// disclosed, those controls stay visible (and disable while a request runs)
-/// as the status cycles until the user closes the session.
+/// The ribbon is a cyclical edit session: its four preset controls stay visible
+/// while Custom replaces its button with a field. A status
+/// strip cycles idle → running → applied → back, until the user closes
+/// the session. Applied versions remain available through ⌘Z.
 @MainActor
 @Observable
 final class PanelModel {
     enum Phase: Equatable { case idle, running, confirm, applied, error }
     enum Scope: Equatable { case selection, document }
-    /// The ribbon's focusable cells, listed in Tab order.
-    enum Cell: Hashable {
-        case oops, snippets, snippet(Int), smartEdit, action, direction, run
-    }
+    /// The ribbon's focusable cells. Action carries its stable catalog index;
+    /// Run exists only inside the disclosed Custom field. None keeps a fresh
+    /// ribbon visually neutral until the user chooses a control.
+    enum Cell: Hashable { case none, action(Int), direction, run }
+    /// The action described by the ribbon right now. Explicit selection keeps
+    /// an empty Custom field distinct from the default Improve action.
+    enum ActionChoice: Equatable { case preset(PanelPreset), custom }
+
+    /// Custom follows the four presets in the default strip and owns ⌘5.
+    static let customActionIndex = PanelPreset.all.count
+    static let actionIndices = Array(0...customActionIndex)
 
     var phase: Phase = .idle {
         didSet {
@@ -38,22 +45,8 @@ final class PanelModel {
     /// The status line reads "Reading selection…" until this clears.
     var capturing = false
     var instruction = ""
-    var snippets: [TextSnippet] = []
-    var snippetError: String?
-    /// Whether the compact entry row has given way to direct snippet keys.
-    var snippetsExpanded = false
-    /// The provider-backed editing workflow is disclosed on demand so the
-    /// ribbon opens with its local actions and one clear AI entry.
-    var smartEditExpanded = false
-    /// A preset the user pinned from the Action cell, which then runs instead
-    /// of the instruction-derived action. `nil` — the default — means the
-    /// action is derived from the Direction field, as it always has been.
-    var pinnedPreset: PanelPreset?
+    var actionChoice: ActionChoice = .preset(.improve)
     var runningTitle = ""
-    /// Local actions such as Oops still use `.running` to lock controls while
-    /// they capture and apply text, but do not need the provider progress
-    /// animation.
-    var showsRunningAnimation = true
     var errorText = ""
     /// Size of the document and the pending result while awaiting confirmation
     /// of a whole-document replacement (`.confirm` phase).
@@ -76,27 +69,24 @@ final class PanelModel {
     /// result) and which version the document currently shows.
     var versionCount = 0
     var currentIndex = 0
-    /// Bumped on every fresh session so observers can distinguish resets.
+    /// Bumped on every fresh session so the view can refocus the primary control.
     var sessionSeq = 0
     /// Bumped whenever the panel retakes key status (e.g. after the Settings
-    /// window closes) so the view puts focus back in the field.
+    /// window closes) so the view restores the primary focus target.
     var focusSeq = 0
     /// Which cell holds keyboard focus.
     ///
     /// Lives on the model because Tab is not a key equivalent: it arrives at
     /// the window, which has no way to reach a view-local `@FocusState`. The
     /// view mirrors this into one, in both directions.
-    var focusedCell: Cell = .smartEdit
+    var focusedCell: Cell = .none
 
     // Wired by EditCoordinator.
     /// Run an action, optionally with guidance the user typed alongside it.
     var onPerform: ((EditAction, String?) -> Void)?
-    /// Correct text typed with the English/Hebrew keyboard layout reversed.
-    var onOops: (() -> Void)?
-    /// Paste a local value selected from the snippets file.
-    var onSnippet: ((TextSnippet) -> Void)?
-    /// Navigate the document to versions[index].
-    var onNavigate: ((Int) -> Void)?
+    /// Restore the previous applied version. The instruction field gets first
+    /// refusal on ⌘Z; this is the fallback once its own undo stack is empty.
+    var onUndoVersion: (() -> Bool)?
     var onRetry: (() -> Void)?
     /// Apply the pending whole-document replacement awaiting confirmation.
     var onConfirmApply: (() -> Void)?
@@ -105,6 +95,19 @@ final class PanelModel {
     /// Close the whole session (Esc / Done), keeping the document as shown.
     var onCancel: (() -> Void)?
 
+    /// Esc means "back out of the smallest thing in progress".
+    ///
+    /// While an action is running that is the run itself, so the ribbon stays
+    /// up and the user can try something else. With nothing in flight there is
+    /// nothing smaller to leave than the session, so Esc dismisses the ribbon.
+    func escape() {
+        if phase == .running {
+            onCancelRun?()
+        } else {
+            onCancel?()
+        }
+    }
+
     func reset(hasSelection: Bool, charCount: Int) {
         phase = .idle
         self.hasSelection = hasSelection
@@ -112,11 +115,8 @@ final class PanelModel {
         scope = hasSelection ? .selection : .document
         capturing = false
         instruction = ""
-        snippetsExpanded = false
-        smartEditExpanded = false
-        pinnedPreset = nil
+        actionChoice = .preset(.improve)
         runningTitle = ""
-        showsRunningAnimation = true
         errorText = ""
         pendingOriginalCharCount = 0
         pendingResultCharCount = 0
@@ -125,42 +125,8 @@ final class PanelModel {
         errorDetailsExpanded = false
         versionCount = 0
         currentIndex = 0
-        focusedCell = .smartEdit
+        focusedCell = .none
         sessionSeq &+= 1
-    }
-
-    /// Reveal the provider-backed controls and put the insertion point where
-    /// the user can immediately describe the edit they want.
-    func showSmartEdit() {
-        guard !isLocked, !smartEditExpanded else { return }
-        smartEditExpanded = true
-        returnFocusToDirection()
-    }
-
-    func showSnippets() {
-        guard !isLocked, !snippetsExpanded, !snippets.isEmpty else { return }
-        snippetsExpanded = true
-        focusedCell = .snippet(0)
-        focusSeq &+= 1
-    }
-
-    /// ⌘1…⌘9 activates the matching visible button. Smart Edit keeps its
-    /// documented preset mapping rather than treating Target as button one.
-    func activateNumberedButton(at index: Int) {
-        guard !isLocked else { return }
-        if smartEditExpanded {
-            selectPreset(at: index)
-        } else if snippetsExpanded {
-            guard snippets.indices.contains(index) else { return }
-            runSnippet(snippets[index])
-        } else {
-            switch index {
-            case 0: runOops()
-            case 1: showSnippets()
-            case 2: showSmartEdit()
-            default: break
-            }
-        }
     }
 
     /// ⌘T and the Target menu. Aiming at the selection is inert when there is
@@ -179,22 +145,33 @@ final class PanelModel {
         setScope(scope == .selection ? .document : .selection)
     }
 
-    /// ⌘1…⌘4 — pin the nth preset, exactly as choosing it from the Action menu
-    /// does, focus hand-back included. Out-of-range indices are ignored rather
-    /// than clamped: a fifth preset shortcut should do nothing until there is a
-    /// fifth preset, not silently fire the fourth.
+    /// Select a preset without running it. Kept separate from activation for
+    /// state restoration and tests; visible action buttons use `activateAction`.
     func selectPreset(at index: Int) {
         guard !isLocked, PanelPreset.all.indices.contains(index) else { return }
-        pinnedPreset = PanelPreset.all[index]
-        returnFocusToDirection()
+        actionChoice = .preset(PanelPreset.all[index])
+        returnFocusToPrimaryControl()
     }
 
-    /// ⌘0, and the Action menu's `Your instruction`. Hands the action back to
-    /// the Direction field.
-    func clearPreset() {
+    /// The Custom button and ⌘5 disclose its field without running it.
+    func selectCustomInstruction() {
         guard !isLocked else { return }
-        pinnedPreset = nil
-        returnFocusToDirection()
+        actionChoice = .custom
+        returnFocusToPrimaryControl()
+    }
+
+    /// A visible action button or ⌘1…⌘5. Built-ins run immediately; Custom
+    /// replaces its button with the field and hands focus to it.
+    func activateAction(at index: Int) {
+        guard !isLocked else { return }
+        if PanelPreset.keyboardActions.indices.contains(index) {
+            let preset = PanelPreset.keyboardActions[index]
+            actionChoice = .preset(preset)
+            returnFocusToPrimaryControl()
+            onPerform?(preset.action, nil)
+        } else if index == Self.customActionIndex {
+            selectCustomInstruction()
+        }
     }
 
     /// Whether the command cells are taking input. The keyboard has to honor
@@ -202,15 +179,19 @@ final class PanelModel {
     /// tree, so they never see the `disabled` that greys the cells out.
     var isLocked: Bool { phase == .running || phase == .confirm }
 
-    /// Hand keyboard focus back to Direction.
-    ///
-    /// A menu keeps focus after a choice is made, which strands anything the
-    /// user types next — they picked an action and immediately started typing
-    /// the guidance to go with it. Every menu choice therefore returns focus to
-    /// the field that guidance belongs in.
-    func returnFocusToDirection() {
-        focusedCell = .direction
+    /// Hand keyboard focus to the selected action, or to Custom's field.
+    func returnFocusToPrimaryControl() {
+        focusedCell = primaryFocusCell
         focusSeq &+= 1
+    }
+
+    var primaryFocusCell: Cell {
+        switch actionChoice {
+        case .preset(let preset):
+            return .action(PanelPreset.all.firstIndex(of: preset) ?? 0)
+        case .custom:
+            return .direction
+        }
     }
 
     /// Tab / ⇧Tab, wrapping at both ends.
@@ -224,12 +205,58 @@ final class PanelModel {
         focusedCell = cells[(current + step) % cells.count]
     }
 
+    /// Every visible control is its own stop, in visual order. Direction
+    /// replaces Custom while its field is disclosed.
     var focusableCells: [Cell] {
-        guard smartEditExpanded else {
-            if snippetsExpanded { return snippets.indices.map(Cell.snippet) }
-            return [.oops, .snippets, .smartEdit]
+        var cells: [Cell] = []
+        for index in actionDisplayOrder {
+            if index == Self.customActionIndex, isCustomInstructionSelected {
+                cells.append(.direction)
+            } else {
+                cells.append(.action(index))
+            }
         }
-        return [.action, .direction, .run]
+        if isCustomInstructionSelected { cells.append(.run) }
+        return cells
+    }
+
+    /// Four built-ins then Custom, in the same order in every state.
+    var actionDisplayOrder: [Int] {
+        Self.actionIndices
+    }
+
+    func actionTitle(at index: Int) -> String? {
+        if PanelPreset.all.indices.contains(index) { return PanelPreset.all[index].title }
+        return index == Self.customActionIndex ? "Custom" : nil
+    }
+
+    func actionSymbol(at index: Int) -> String? {
+        if PanelPreset.all.indices.contains(index) { return PanelPreset.all[index].action.symbol }
+        return index == Self.customActionIndex ? EditAction.custom("").symbol : nil
+    }
+
+    /// The label shown on an action control in its current phase.
+    func actionLabel(at index: Int) -> String? {
+        guard let title = actionTitle(at: index) else { return nil }
+        guard phase == .running, isActionSelected(at: index) else { return title }
+        return actionProgressLabel(at: index)
+    }
+
+    /// Reserved beside the idle label so status changes never resize the strip.
+    func actionProgressLabel(at index: Int) -> String? {
+        if PanelPreset.all.indices.contains(index) {
+            return PanelPreset.all[index].action.progressLabel
+        }
+        return index == Self.customActionIndex ? EditAction.custom("").progressLabel : nil
+    }
+
+    func isActionSelected(at index: Int) -> Bool {
+        switch actionChoice {
+        case .preset(let selected):
+            return PanelPreset.all.indices.contains(index) && PanelPreset.all[index] == selected
+        case .custom:
+            return index == Self.customActionIndex
+        }
     }
 
     /// True when the user has typed something to act on, as opposed to leaving
@@ -238,53 +265,69 @@ final class PanelModel {
         !instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    /// The action the primary control will run right now, as the ribbon's
-    /// Action cell shows it. Pure — no side effects, safe to read during
-    /// layout.
-    var resolvedActionTitle: String {
-        if let pinnedPreset { return pinnedPreset.title }
-        return hasCustomInstruction ? "Your instruction" : EditAction.improve.title
+    var isCustomInstructionSelected: Bool {
+        if case .custom = actionChoice { return true }
+        return false
     }
 
-    /// The icon for `resolvedActionTitle`. The Action cell lost its caption, so
-    /// the glyph is now what marks it as the *action* rather than another
-    /// menu — the words alone no longer say which cell they belong to.
+    var canRunPrimary: Bool { !isCustomInstructionSelected || hasCustomInstruction }
+
+    /// Custom is the only state that expands the ribbon. Every other phase uses
+    /// one stable width so starting or finishing a request never moves the UI.
+    var prefersExpandedRibbon: Bool {
+        isCustomInstructionSelected
+    }
+
+    /// The visible keyboard hint for an action. Keeping this beside the action
+    /// catalog guarantees hover labels and actual key routing stay in lockstep.
+    func actionShortcut(at index: Int) -> String? {
+        Self.actionIndices.contains(index) ? "⌘\(index + 1)" : nil
+    }
+
+    var customSubmitTitle: String { phase == .running ? "Working" : "Run" }
+
+    /// Ask the coordinator to walk the applied-version history backward.
+    /// Kept on the model so the window's ⌘Z route stays independently testable.
+    func undoLastVersion() -> Bool {
+        guard phase == .applied, currentIndex > 0 else { return false }
+        return onUndoVersion?() ?? false
+    }
+
+    /// The action the primary control will run right now. Pure — no side
+    /// effects, safe to read during layout.
+    var resolvedActionTitle: String {
+        switch actionChoice {
+        case .preset(let preset): return preset.title
+        case .custom: return "Custom"
+        }
+    }
+
+    /// The icon for `resolvedActionTitle`, retained for status/help surfaces.
     var resolvedActionSymbol: String {
-        if let pinnedPreset { return pinnedPreset.action.symbol }
-        return hasCustomInstruction ? EditAction.custom("").symbol : EditAction.improve.symbol
+        switch actionChoice {
+        case .preset(let preset): return preset.action.symbol
+        case .custom: return EditAction.custom("").symbol
+        }
     }
 
     /// The primary path, shared by Return and the field's run button. Runs a
-    /// pinned preset if there is one; otherwise `Improve` when the field is
-    /// empty and the typed instruction when it is not.
+    /// selected preset, or the disclosed custom instruction. Blank Custom is
+    /// deliberately inert rather than silently falling back to Improve.
     func runPrimary() {
-        if let pinnedPreset {
-            runPreset(pinnedPreset)
-            return
-        }
-        let trimmed = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            onPerform?(.improve, nil)
-        } else {
+        switch actionChoice {
+        case .preset(let preset):
+            onPerform?(preset.action, nil)
+        case .custom:
+            let trimmed = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
             onPerform?(.custom(trimmed), nil)
         }
     }
 
-    func runOops() {
-        guard !isLocked else { return }
-        onOops?()
-    }
-
-    func runSnippet(_ snippet: TextSnippet) {
-        guard !isLocked else { return }
-        onSnippet?(snippet)
-    }
-
-    /// Run a preset chosen from the field's dropdown. Anything typed in the
-    /// field rides along as additional guidance for the preset's specialized
-    /// prompt, rather than replacing it the way the primary path would.
-    func runPreset(_ preset: PanelPreset) {
-        let trimmed = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
-        onPerform?(preset.action, trimmed.isEmpty ? nil : trimmed)
+    /// Return to the buttons-only default after an edit lands.
+    func restoreDefaultAction() {
+        instruction = ""
+        actionChoice = .preset(.improve)
+        focusedCell = .none
     }
 }

@@ -18,10 +18,10 @@ final class KeyablePanel: NSPanel {
     var onSubmit: (() -> Void)?
     /// ⌘T — swap the target between the selection and the whole document.
     var onToggleTarget: (() -> Void)?
-    /// ⌘1…⌘9 — activate the nth visible ribbon button.
-    var onActivateNumber: ((Int, TimeInterval) -> Void)?
-    /// ⌘0 — unpin, handing the action back to the Direction field.
-    var onClearPreset: (() -> Void)?
+    /// ⌘1…⌘5 — activate the matching visible action button.
+    var onActivateAction: ((Int) -> Void)?
+    /// ⌘Z after the instruction field has exhausted its own undo stack.
+    var onUndoVersion: (() -> Bool)?
 
     override var canBecomeKey: Bool { true }
 
@@ -29,9 +29,9 @@ final class KeyablePanel: NSPanel {
         (onEscape ?? onCancel)?()
     }
 
-    /// Observe key presses so the coordinator can cancel the post-apply beat and
-    /// drive version navigation. Events it doesn't consume still forward to the
-    /// content (typing, Esc), so the panel behaves normally otherwise.
+    /// Observe key presses so the coordinator can cancel the post-apply beat.
+    /// Events it doesn't consume still forward to the content (typing, Esc),
+    /// so the panel behaves normally otherwise.
     override func sendEvent(_ event: NSEvent) {
         if event.type == .keyDown, onKeyDown?(event) == true { return }
         super.sendEvent(event)
@@ -50,14 +50,18 @@ final class KeyablePanel: NSPanel {
         case .copy: dispatchEditorAction(#selector(NSText.copy(_:)))
         case .paste: dispatchEditorAction(#selector(NSText.paste(_:)))
         case .cut: dispatchEditorAction(#selector(NSText.cut(_:)))
-        case .undo: if let undo = fieldUndoManager, undo.canUndo { undo.undo() }
+        case .undo:
+            if let undo = fieldUndoManager, undo.canUndo {
+                undo.undo()
+            } else {
+                _ = onUndoVersion?()
+            }
         case .redo: if let undo = fieldUndoManager, undo.canRedo { undo.redo() }
         case .closePanel: onCancel?()
         case .openSettings: onOpenSettings?()
         case .submit: onSubmit?()
         case .toggleTarget: onToggleTarget?()
-        case .activateNumber(let index): onActivateNumber?(index, event.timestamp)
-        case .clearPreset: onClearPreset?()
+        case .activateAction(let index): onActivateAction?(index)
         }
         // Always consume a recognized shortcut, like a menu item would —
         // a no-op (e.g. nothing to undo) should not fall through and beep.

@@ -7,7 +7,8 @@ import AppKit
 /// do in regular apps. The panel resolves them itself (see `KeyablePanel`)
 /// and dispatches the matching editor action or panel behavior.
 enum PanelKeyCommand: Equatable {
-    /// Standard editing in the instruction field.
+    /// Standard editing in the instruction field. ⌘Z falls back to the
+    /// previous applied version when the field has nothing left to undo.
     case selectAll, copy, paste, cut, undo, redo
     /// ⌘W — close the session, same as Esc.
     case closePanel
@@ -15,17 +16,9 @@ enum PanelKeyCommand: Equatable {
     case openSettings
     /// ⌘⏎ — run the primary action, same as Return.
     case submit
-    /// ⌘1…⌘9 — activate the nth visible ribbon button. Smart Edit interprets
-    /// the first four as its documented presets.
-    case activateNumber(Int)
-    /// ⌘0 — unpin, handing the action back to the Direction field.
-    ///
-    /// The menu's `Your instruction` row does this with the mouse, but SwiftUI's
-    /// `Menu` under `.buttonStyle(.plain)` opens for neither Space nor Return,
-    /// so without a key of its own a pinned preset would be permanent for the
-    /// rest of a keyboard-only session. Zero because it reads as "none of the
-    /// four", and it sits next to them on the row.
-    case clearPreset
+    /// ⌘1…⌘5 — activate the matching visible action button. The first four run
+    /// immediately; the fifth selects Custom and focuses its field.
+    case activateAction(Int)
     /// ⌘T — swap the target between the selection and the whole document.
     ///
     /// The digits it used to share with the presets are worth more to them:
@@ -51,16 +44,11 @@ enum PanelKeyCommand: Equatable {
         case (",", [.command]): return .openSettings
         case ("\r", [.command]): return .submit
         case ("t", [.command]): return .toggleTarget
-        case ("0", [.command]): return .clearPreset
-        case ("1", [.command]): return .activateNumber(0)
-        case ("2", [.command]): return .activateNumber(1)
-        case ("3", [.command]): return .activateNumber(2)
-        case ("4", [.command]): return .activateNumber(3)
-        case ("5", [.command]): return .activateNumber(4)
-        case ("6", [.command]): return .activateNumber(5)
-        case ("7", [.command]): return .activateNumber(6)
-        case ("8", [.command]): return .activateNumber(7)
-        case ("9", [.command]): return .activateNumber(8)
+        case ("1", [.command]): return .activateAction(0)
+        case ("2", [.command]): return .activateAction(1)
+        case ("3", [.command]): return .activateAction(2)
+        case ("4", [.command]): return .activateAction(3)
+        case ("5", [.command]): return .activateAction(4)
         default: return nil
         }
     }

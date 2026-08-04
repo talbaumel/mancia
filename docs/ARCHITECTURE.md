@@ -12,17 +12,21 @@ Sources/Mancia/
 ├── main.swift                    NSApplication bootstrap; routes to DebugCLI
 │                                 before any UI is created (LSUIElement, no Dock icon)
 ├── AppDelegate.swift             Wires status item, hotkey, coordinator, settings window
-├── StatusBarController.swift     NSStatusItem + menu (Edit / Provider status / Settings / Quit)
+├── StatusBarController.swift     NSStatusItem + menu (Edit / Provider status / Settings /
+│                                 About / Quit)
 ├── HotkeyManager.swift           Registers the global hotkey (KeyboardShortcuts pkg)
-├── SelectionMonitor.swift        Detects completed mouse/keyboard text selections and
-│                                 opens the ribbon after confirming a nonempty AX range
 ├── Permissions.swift             AXIsProcessTrusted() checks + System Settings deep link
 ├── SelectionCapture.swift        Pasteboard snapshot/capture/replace via synthetic ⌘C/⌘A/⌘V,
 │                                 ⌘Z undo helper, AX caret-rect lookup; keystrokes are
 │                                 posted to the target app's pid (CGEvent.postToPid)
-├── EditCoordinator.swift         Orchestrates a cyclical edit session: capture → ribbon →
+├── EditCoordinator.swift         Drives a cyclical edit session: capture → ribbon →
 │                                 provider → apply inline → iteration history/navigation
-├── DebugCLI.swift                --provider-check / --complete headless entry points
+├── EditSession.swift             Pure decision core for a session — which text each cycle
+│                                 sends, how the result goes back, and the version history
+├── DebugCLI.swift                --provider-check / --complete / --about-check /
+│                                 --ribbon-click-check headless and UI entry points
+├── AboutPanel.swift              The standard About panel's options, icon, and presentation
+├── AppVersion.swift              Reads the version from the bundle; no version literal in Swift
 ├── Actions.swift                 EditAction enum + PromptBuilder (prompt templates)
 ├── Panel/
 │   ├── PanelModel.swift          @Observable state shared between coordinator and view
@@ -37,15 +41,16 @@ Sources/Mancia/
 │   ├── RibbonWindow.swift        Hosts the lane: measures the view at the resolved width,
 │   │                             sets the frame, animates entry/exit, tracks screen changes
 │   ├── RibbonPlacement.swift     Pure placement resolver — sits against the selection when
-│   │                             the host reports one, else under the menu bar or the
+│   │                             the host reports one (under it, over it, or in the margin
+│   │                             beside a tall block), else under the menu bar or the
 │   │                             host's title bar
 │   ├── HostWindowProbe.swift     Reads the frontmost window's frame and full-screen state
 │   │                             through Accessibility (placement's second input)
-│   ├── RibbonView.swift          The lane: one row of Target / Action / Direction / Run,
-│   │                             with status and iteration beside Run and an error row
+│   ├── RibbonView.swift          The lane: Target / five Actions / Run, moving Custom
+│   │                             left and disclosing Direction when selected
 │   ├── RibbonReviewView.swift    The whole-document review gate
 │   ├── RibbonControls.swift      Controls shared across the lane's registers
-│   └── RibbonPalette.swift       Appearance-adaptive glass and color tokens
+│   └── RibbonPalette.swift       The lane's dark-register color tokens
 ├── Providers/
 │   ├── LLMProvider.swift         LLMProvider/WarmableLLMProvider protocols and ProviderStatus
 │   ├── CopilotCLIProvider.swift  GitHub Copilot CLI backend (binary discovery, argv, fallback Process)
@@ -76,16 +81,11 @@ There is no `Resources/` asset catalog — the menu bar icon is the SF Symbol
 ## Core flow
 
 `AppDelegate.applicationDidFinishLaunching` builds one `CopilotCLIProvider`,
-one `EditCoordinator`, one `StatusBarController`, one `HotkeyManager`, and one
-`SelectionMonitor`, with the manual and automatic triggers wired to call
-`coordinator.start()`.
+one `EditCoordinator`, one `StatusBarController`, and one `HotkeyManager`, all
+wired to call `coordinator.start()`.
 
-1. **Trigger** — `HotkeyManager` (global hotkey), `StatusBarController`
-  ("Edit Selection…"), or `SelectionMonitor` calls `EditCoordinator.start()`.
-  The monitor treats mouse-up and selection-related key-up events as hints,
-  waits briefly for the host to settle, and opens only when Accessibility
-  reports a selected range with nonzero length. The Settings toggle gates the
-  monitor live; disabling it leaves the shortcut and menu command available.
+1. **Trigger** — `HotkeyManager` (global hotkey) or `StatusBarController`
+   ("Edit Selection…") calls `EditCoordinator.start()`.
 2. **Capture** — `EditCoordinator.start()` first checks Accessibility
    (`Permissions.isAccessibilityTrusted`; prompts + shows an alert if not
    granted, then bails). It then calls
@@ -104,10 +104,15 @@ one `EditCoordinator`, one `StatusBarController`, one `HotkeyManager`, and one
 
    When the host reports where the selected text is, the lane **sits just
    under the selection** — or just over it, when the selection is too near the
-   foot of the host to fit beneath. That is the ordinary case, and it is the
+   foot of the display to fit beneath. That is the ordinary case, and it is the
    point of the rule: the command the user is composing sits next to the words
-   it will rewrite. When there is no selection rectangle — a bare caret, or a
-   host that cannot answer — the lane takes a predictable place instead:
+   it will rewrite. When the block is too tall for either end — a paragraph, a
+   long quote — the lane **stands in the margin beside it**, on the roomier
+   flank, as wide as that margin can hold. A tall selection is usually a
+   narrow one, so the margin is nearly always there, and a lane standing in it
+   covers no text at all. When there is no selection rectangle — a bare caret,
+   so the whole document is the target, or a host that cannot answer — the lane
+   takes a predictable place instead:
    - **screen-anchored** — flush under the menu bar, when the menu bar is
      reserving a strip at the top of the screen;
    - **host-anchored** — under the frontmost window's title bar, when it is
@@ -115,64 +120,90 @@ one `EditCoordinator`, one `StatusBarController`, one `HotkeyManager`, and one
      nowhere safe to sit, and on a notched display the top of the screen is
      not addressable at all.
 
-   That predictable place is also the fallback for a selection with nowhere
-   beside it — the whole document selected, say. A move that buys nothing is
-   worse than staying where the user expects.
+   That predictable place is the last resort, and only for a selection with
+   nowhere at all beside it — everything on screen selected, say, where every
+   position covers the text as thoroughly as the next. Before it comes the
+   **cramped end**: a block with no margin either side still gets the lane at
+   whichever end can hold it as it opens (`crampedRoom`), because covering the
+   head of a block from the far end of the screen is worse than standing
+   against its foot. A move that buys nothing is worse than staying where the
+   user expects; a move that buys the whole point of the rule is not.
 
-   Whichever edge the lane hangs from is the edge it **pins**, so it grows
-   away from the selection and a review gate can never creep back over the
-   line it was invoked on. The room beside the selection is judged against
-   `projectedHeight`, the tallest ordinary state, not the height the lane
-   opens at: a 48pt row fits into gaps a ~195pt review gate does not. The
-   anchor is then **established for the session** and fed back through
+   Whichever edge faces the selection is the edge the lane **pins**, so it
+   grows away from the text. An end with room for `projectedHeight`, or a
+   margin the lane owns outright, stays clear as the review gate opens. The
+   cramped-end fallback is the deliberate exception: its opening row clears
+   the words, but screen clamping can move a grown gate back over the block's
+   far end. The anchor is **established for the session** and fed back through
    `Context.establishedAnchor`, so a lane that grew mid-run does not leap
    across the screen and leap back when the region closes. A bare caret is not
    a selection: with nothing selected the target is the whole document and
    there is no line to sit against.
 
-  The lane opens just below the mouse position captured at invocation, or just
-  above it when there is no room beneath, and stays there for the session. It
-  falls back to selection/resting placement and horizontal centering when the
-  pointer is on another display. The lane's
-   **width is imposed by placement** (the host's width, clamped to a maximum
-   and centered) and only its **height comes from content**, so the view is
-   measured at the resolved width before the frame is set. `HostWindowProbe`
-   supplies the host window's frame and full-screen state through
-   Accessibility; every failure path returns `nil` and placement degrades to
-   the screen rather than failing the session.
+   Vertical *and* horizontal position follow the selection: the lane is
+   centered on the selected span, and the room at its ends and flanks is
+   measured against the **display's band**, never the host window. The lane
+   floats over its host rather than inside it, so a window much wider than the
+   sentence is no reason to put the lane half a screen from it, and a window
+   shorter than the room below the words is no reason to send the lane over
+   them. The lane's **width is imposed by placement**: buttons-only states ask
+   for the stable 600pt standard width and Custom asks for up to 900pt, then an
+   end anchor bounds that request by the selected span, a margin anchor by its
+   available flank, and a resting anchor by the window or screen. Every result
+   stays between `minimumWidth` and `maximumWidth`. Only the lane's **height
+   comes from content**, so the view is measured at the resolved width before
+   the frame is set.
+   `HostWindowProbe` supplies the host window's frame and full-screen state
+   through Accessibility; every failure path returns `nil` and placement
+   degrades to the screen rather than failing the session.
 
-  The lane is a focused **edit session**. Action, Direction and Run
-   sit on a **single row**, dimmed and disabled while a request runs. Each
-   control names itself — an icon and a value in a chip, a prompt inside the
-   field — rather than carrying a caption above it, which is what lets the row
-   be one line rather than two. Live status is a dot and one word **beside
-  Run**, riding in width the Direction field gives up by capping at a
-  comfortable measure. Only a
+   The lane is a cyclical **edit session**. Target, five tight Action buttons and
+   Run sit on a **single row**, dimmed and disabled while a request runs.
+   Selecting Custom moves it to the leading edge, inserts Direction after it,
+   and expands the whole lane horizontally. Hovering an action replaces its
+   title with its ⌘1…⌘5 shortcut without changing the button's size. Each
+   control names itself rather than carrying a caption above it. Running and
+   applied status replace the text **inside Run**, while iteration history stays
+   beside it. When disclosed, Direction
+   takes the row's slack up to a comfortable measure. Only a
    failure still earns a **row of its own**, because it carries a message plus
-  Details, Copy and Retry. Smart Edit follows `.idle → .running`, then closes
-  immediately when the provider returns and applies the result with no review,
-  applied state, or exit animation. Provider and validation failures move to
-  `.error` and keep the lane visible for recovery.
+   Details, Copy and Retry. `PanelModel.phase` cycles
+   `.idle → .running → .confirm → .applied/.error` and back until the user
+   closes it. The lane **stays visible throughout**: all synthetic keystrokes
+   are posted directly to the target app's process (`CGEvent.postToPid`), so
+   they cannot be swallowed by the lane and no hide/reveal dance is needed.
+   After each keystroke burst (which activates the target app) the coordinator
+   calls `ribbon.focus()` to retake key status so Esc and typing reach the
+   lane again.
 
    Tab, ⇧Tab and the focus **ring both read `PanelModel.focusedCell`**, not the
    view's `@FocusState`. Tab arrives at the window rather than at a view, and
    SwiftUI grants `@FocusState` to the Direction field but refuses it to the
-   three `.focusable()` cells, so the model is the only place that knows which
-   stop the keyboard is on.
+   live `.focusable()` cells, so the model is the only place that knows which
+   stop the keyboard is on. Every action button is a stop; Direction joins the
+   ring immediately after Custom only while the field is disclosed.
 
-  ⌘1…⌘9 activate visible compact/snippet buttons by position; in Smart Edit,
-  ⌘1…⌘4 pin the nth entry of `PanelPreset.all`. ⌘T swaps the target, both
-   resolved by `PanelKeyCommand` and dispatched through `KeyablePanel`. Because
+   ⌘1…⌘4 immediately run Improve, Sharpen, Plan first, and Tighten; ⌘5 moves
+   Custom left, discloses its field, and focuses it without running. ⌘T swaps the target. These
+   commands are resolved by `PanelKeyCommand` and dispatched through
+   `KeyablePanel`. Because
    that happens above the SwiftUI tree, the `disabled` that greys the cells out
    while a request runs is invisible to them — `PanelModel.isLocked` is what
    actually holds them off, and the mutating entry points check it themselves.
 4. **Perform** — the user takes the primary path (`PanelModel.runPrimary()`:
-   Return or the Run control, giving `.improve` on an empty Direction field
-   and `.custom(text)` on a typed one) or picks a preset from the Action cell
-   (`PanelModel.runPreset(_:)`, which passes the typed text along as a guidance
-   note rather than as the instruction).
+   Return or Run executes the explicitly selected preset, or `.custom(text)`
+   when Custom is selected and non-empty). ⌘1…⌘4 dispatch their built-in actions
+   directly. Hidden custom draft text never rides along with
+   a preset.
    `EditCoordinator.perform(_:note:)` resolves this cycle's input and apply
-   strategy (`resolveInput()`):
+   strategy. The rules are `EditSession`'s — a pure, AppKit-free step machine
+   that the coordinator drives, asking for one observation at a time (probe
+   the frontmost app, capture a new target, probe for a fresh selection,
+   capture the document) until it answers with a run or an abort. Ahead of
+   both scope branches it checks whether the user has moved to a different
+   app, since neither branch can tell that the session's target went stale
+   underneath it; only a live selection in the new app re-targets, and doing
+   so resets the baseline. The two scope branches:
    - `.document` scope: when the session originally found no selection, first
      probes with a fresh `⌘C`; a new non-empty live selection switches the
      session to `.selection` scope, unless it matches the currently shown
@@ -195,16 +226,37 @@ one `EditCoordinator`, one `StatusBarController`, one `HotkeyManager`, and one
    Providers that conform to `WarmableLLMProvider` are warmed when the lane
    opens and after it closes; `CopilotCLIProvider` uses that hook to keep one
    empty, single-use ACP session ready for the next edit.
-5. **Close & apply** — when the provider returns, `EditCoordinator` orders the
-   ribbon out immediately, without an exit animation or an intermediate review
-   state. `SelectionCapture.apply(text:to:entireDocument:)` then pastes the
-   result (pasteboard → activate target → `⌘V`, restoring the user's pasteboard
-   ~1 s later); document scope uses `⌘A`+`⌘V`. The session ends after the paste.
-   **Cancel** in the running strip stops the in-flight task and keeps the lane
-   open; **Retry** in the error strip runs the last action again.
+5. **Confirm (whole-document only)** — before a `.document`-scope result
+   overwrites the document, the panel pauses in `PanelModel.phase == .confirm`
+   (`ApplyConfirmation.isRequired`, gated by
+   `AppSettings.confirmWholeDocumentReplace`, default on). The strip shows the
+   size change (`ApplyConfirmation.summary`) alongside **Replace** (⏎ /
+   `EditCoordinator.confirmApply()`), and **Cancel** discards the pending
+   result. Selection edits skip this — they are
+   low blast-radius and undoable — and apply straight away. This keeps an
+   injection-influenced or runaway result from silently replacing everything.
+6. **Apply & iterate** — when the result arrives (immediately for selections,
+   on confirm for documents),
+   `SelectionCapture.apply(text:to:entireDocument:)` pastes it (pasteboard →
+   activate target → `⌘V`, restoring the user's pasteboard ~1 s later) with
+   the lane still on screen. The coordinator records the iteration
+   (`versions`: index 0 is the session original, one entry per applied
+   result; running a new action from an earlier version truncates the
+   forward history). ⌘Z calls `EditCoordinator.undoLastVersion()` to rewrite
+   the document with the previous entry: undo-then-paste for selections
+   (including index 0), `⌘A`+`⌘V` for document scope (robust against
+   manual edits in between).
+   - **Cancel** (the primary button on hover while running) stops the in-flight
+     `Task` but keeps the session open; **Retry** runs the action the ribbon
+     currently describes.
+   - Esc stops an action that is still running and leaves the lane up;
+     with nothing in flight it closes the session, keeping whichever version
+     is showing. Hybrid post-apply behavior closes the lane on its own after
+     a beat.
 
 Esc anywhere in the lane routes through `KeyablePanel.cancelOperation` →
-`model.onCancel` and closes the session in every phase.
+`panel.onEscape` → `model.escape()`, which picks `onCancelRun` while the phase
+is `.running` and `onCancel` otherwise. ⌘W keeps the unconditional close.
 
 ## The `LLMProvider` protocol
 
@@ -257,17 +309,20 @@ To add a new provider:
    its price class. Check what the picker will show with
    `swift run Mancia --list-models`.
 
-   **Keep the catalog free of hardcoded model ids.** Everything the picker
-   does — tiering, ordering, and the first-run recommendation
-   (`recommendedFastModel`) — is derived from what the backend advertises:
-   the latency class, the price class, and the premium-request multiplier
-   (`_meta.copilotUsage`, live only). A model released tomorrow is tiered,
-   ranked, and can become the recommended default with no code change, and a
-   retired one disappears on its own. Named-id lists rot silently as models
-   come and go, so add signals rather than special cases. Unknown enum values
-   (a new latency class, price class, or reasoning-effort level) must degrade
-   to a sensible default instead of dropping the model. The reasoning-effort
-   picker
+   **Keep the catalog free of hardcoded model ids.** Tiering and the first-run
+   recommendation (`recommendedFastModel`) are derived from what the backend
+   advertises: the latency class, the price class, and the premium-request
+   multiplier (`_meta.copilotUsage`, live only). Within each tier, picker rows
+   group by the model name's leading provider-family prefix, providers sort
+   A-Z, and each provider's models sort newest/highest first by natural name.
+   Copilot exposes no provider field, so an unknown prefix simply forms its own
+   group rather than requiring an allowlist. A model released tomorrow is
+   tiered, ordered, and can become the recommended default with no code change,
+   and a retired one disappears on its own. Named-id lists rot silently as
+   models come and go, so add signals rather than special cases. Unknown enum
+   values (a new latency class, price class, or reasoning-effort level) must
+   degrade to a sensible default instead of dropping the model. The
+   reasoning-effort picker
    narrows to the selected model's `supportedReasoningEfforts` and is passed
    to the CLI as `--reasoning-effort`.
 3. Add a real provider-selection path in `AppSettings` and `SettingsView`
@@ -285,7 +340,7 @@ provider-specific details.
 
 ## Prompt gate & injection hardening
 
-The lane's free-form Direction field plus the captured **selected text** form
+The lane's disclosed free-form Direction field plus the captured **selected text** form
 an open prompt gate. The selected text is untrusted third-party content (an
 email, web page, or chat message the user highlighted) and can carry embedded
 "instructions", so the defenses target the *data path*, not the user's own
@@ -313,12 +368,15 @@ instruction:
   `PromptGuardError`s. Both `EditCoordinator.perform` and `DebugCLI.complete`
   validate before building the prompt; failures surface through the lane's error
   state / stderr rather than sending a runaway request to the provider.
-- **Whole-document Smart Edits apply directly.** Document scope uses the same
-  immediate completion contract as selection scope: provider success closes
-  the ribbon and posts `⌘A`+`⌘V` without a confirmation gate. Prompt isolation
-  and input validation reduce malformed requests, but they do not make model
-  output a security boundary; the user can undo an unwanted replacement in the
-  target app.
+- **Human-in-the-loop for whole-document overwrites (`ApplyConfirmation`).**
+  A `.document`-scope result never auto-pastes: the coordinator pauses in the
+  `.confirm` phase and the user must press **Replace document** (the size delta
+  is shown as a signal). This bounds the blast radius of an injection-influenced
+  or runaway result — the dangerous ⌘A+⌘V path — while leaving low-risk,
+  undoable selection edits immediate. Default on
+  (`AppSettings.confirmWholeDocumentReplace`), user-toggleable. The confirm/
+  keystroke wiring lives in `EditCoordinator`/`RibbonView` and is verified by
+  manual testing; the pure policy (`ApplyConfirmation`) is unit-tested.
 
 Deliberately **not** done: a "jailbreak/abuse classifier" on the instruction
 field. Mancia is a single-user local utility — the operator already owns the
