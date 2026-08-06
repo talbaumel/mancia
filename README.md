@@ -108,6 +108,8 @@ prompts:
     title: Improve
     symbol: wand.and.rays
     progress: Improving
+    overide_model: ""
+    overide_reasoning_effort: ""
     enabled: true
 ```
 
@@ -115,6 +117,18 @@ Changes are loaded whenever a new ribbon session starts. Reorder entries to
 reorder buttons, set `enabled: false` to hide one, or add another `.md` file and
 manifest entry to create a button. The first nine visible controls use
 `⌘1` through `⌘9`; controls after that remain clickable and keyboard-focusable.
+
+Each prompt can optionally override the model and reasoning effort configured
+in Settings:
+
+- `overide_model`: a Copilot model ID, such as `gpt-5` or another ID shown by
+  the model picker. Use `""` or omit the field to use the model from Settings.
+- `overide_reasoning_effort`: `none`, `low`, `medium`, `high`, `xhigh`, or
+  `max`. The selected model must support the chosen level. Use `""` or omit the
+  field to use the reasoning effort from Settings.
+
+Overrides apply only to that Smart Edit item. Custom instructions and items
+without overrides continue to use the global Settings values.
 
 ## Privacy
 

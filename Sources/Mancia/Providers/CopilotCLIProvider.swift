@@ -171,13 +171,59 @@ final class CopilotCLIProvider: LLMProvider {
         await MainActor.run { (self.settings.copilotPath, self.settings.copilotModel, self.settings.reasoningEffort) }
     }
 
+    static func requestConfig(
+        defaultModel: String,
+        defaultReasoningEffort: String,
+        overrides: LLMRequestOverrides?
+    ) -> (model: String, reasoningEffort: String) {
+        (
+            model: overrides?.model ?? defaultModel,
+            reasoningEffort: overrides?.reasoningEffort ?? defaultReasoningEffort
+        )
+    }
+
+    static func warmConfigs(
+        executable: String,
+        defaultModel: String,
+        defaultReasoningEffort: String,
+        overrides: [LLMRequestOverrides]
+    ) -> [CopilotACPConfig] {
+        var configs = [CopilotACPConfig(
+            executable: executable,
+            model: defaultModel,
+            reasoningEffort: defaultReasoningEffort)]
+        for override in overrides {
+            let resolved = requestConfig(
+                defaultModel: defaultModel,
+                defaultReasoningEffort: defaultReasoningEffort,
+                overrides: override)
+            let config = CopilotACPConfig(
+                executable: executable,
+                model: resolved.model,
+                reasoningEffort: resolved.reasoningEffort)
+            if !configs.contains(config) { configs.append(config) }
+        }
+        return Array(configs.prefix(CopilotACPSidecar.maximumClients))
+    }
+
     func complete(_ prompt: String) async throws -> String {
-        let (path, model, reasoningEffort) = await config()
+        try await complete(prompt, overrides: nil)
+    }
+
+    func complete(_ prompt: String, overrides: LLMRequestOverrides?) async throws -> String {
+        let (path, defaultModel, defaultReasoningEffort) = await config()
+        let requestConfig = Self.requestConfig(
+            defaultModel: defaultModel,
+            defaultReasoningEffort: defaultReasoningEffort,
+            overrides: overrides)
         let executable = Self.resolveExecutable(override: path.isEmpty ? nil : path)
         do {
             let output = try await acpSidecar.complete(
                 prompt,
-                config: CopilotACPConfig(executable: executable, model: model, reasoningEffort: reasoningEffort)
+                config: CopilotACPConfig(
+                    executable: executable,
+                    model: requestConfig.model,
+                    reasoningEffort: requestConfig.reasoningEffort)
             )
             return Self.postProcess(output)
         } catch {
@@ -185,7 +231,11 @@ final class CopilotCLIProvider: LLMProvider {
             // ACP is a latency optimization. Keep the old one-shot CLI path as
             // the reliability boundary when the sidecar is missing or wedged.
         }
-        let args = Self.arguments(executable: executable, prompt: prompt, model: model, reasoningEffort: reasoningEffort)
+        let args = Self.arguments(
+            executable: executable,
+            prompt: prompt,
+            model: requestConfig.model,
+            reasoningEffort: requestConfig.reasoningEffort)
 
         let result: ProcessResult
         do {
@@ -290,11 +340,24 @@ extension CopilotCLIProvider: ModelListingProvider {
 
 extension CopilotCLIProvider: WarmableLLMProvider {
     func prepareForPanel() async {
+        await prepareForPanel(overrides: [])
+    }
+
+    func prepareForPanel(overrides: [LLMRequestOverrides]) async {
         let (path, model, reasoningEffort) = await config()
         let executable = Self.resolveExecutable(override: path.isEmpty ? nil : path)
-        await acpSidecar.prepare(
-            config: CopilotACPConfig(executable: executable, model: model, reasoningEffort: reasoningEffort)
-        )
+        let configs = Self.warmConfigs(
+            executable: executable,
+            defaultModel: model,
+            defaultReasoningEffort: reasoningEffort,
+            overrides: overrides)
+        await withTaskGroup(of: Void.self) { group in
+            for config in configs {
+                group.addTask { [acpSidecar] in
+                    await acpSidecar.prepare(config: config)
+                }
+            }
+        }
     }
 
     func panelDidClose() async {

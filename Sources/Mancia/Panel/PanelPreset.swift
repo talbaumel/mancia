@@ -15,19 +15,22 @@ struct PanelPreset: Identifiable, Equatable, Sendable {
     let action: EditAction
     let symbol: String
     let progressLabel: String
+    let requestOverrides: LLMRequestOverrides?
 
     init(
         id: String,
         title: String,
         action: EditAction,
         symbol: String? = nil,
-        progressLabel: String? = nil
+        progressLabel: String? = nil,
+        requestOverrides: LLMRequestOverrides? = nil
     ) {
         self.id = id
         self.title = title
         self.action = action
         self.symbol = symbol ?? action.symbol
         self.progressLabel = progressLabel ?? action.progressLabel
+        self.requestOverrides = requestOverrides
     }
 
     static let improve = PanelPreset(id: "improve", title: "Improve", action: .improve)

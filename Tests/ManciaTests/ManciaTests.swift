@@ -330,6 +330,21 @@ func confirmSettingDefaultsOnAndPersists() {
 }
 
 @MainActor
+@Test("Automatic selection ribbon defaults off and persists opt-in")
+func selectionRibbonSettingDefaultsOffAndPersists() {
+    let suite = "mancia-test-\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    let first = AppSettings(defaults: defaults, modelCatalog: { [] })
+    #expect(first.showRibbonOnTextSelection == false)
+
+    first.showRibbonOnTextSelection = true
+    let second = AppSettings(defaults: defaults, modelCatalog: { [] })
+    #expect(second.showRibbonOnTextSelection == true)
+}
+
+@MainActor
 @Test("Smart Edit laser color defaults, normalizes, and persists")
 func smartEditLaserColorPersists() {
     let suite = "mancia-test-\(UUID().uuidString)"
@@ -1612,6 +1627,8 @@ func promptStoreLoadsManifest() throws {
         title: Proofread
         symbol: text.badge.checkmark
         progress: Proofreading
+        overide_model: gpt-5
+        overide_reasoning_effort: high
         enabled: true
       - file: hidden.md
         title: Hidden
@@ -1622,6 +1639,8 @@ func promptStoreLoadsManifest() throws {
         title: Concise
         symbol: arrow.down.right.and.arrow.up.left
         progress: Tightening
+        overide_model: ""
+        overide_reasoning_effort: ""
         enabled: true
     """
 
@@ -1633,9 +1652,85 @@ func promptStoreLoadsManifest() throws {
         "text.badge.checkmark", "arrow.down.right.and.arrow.up.left",
     ])
     #expect(presets.map(\.progressLabel) == ["Proofreading", "Tightening"])
+    #expect(presets.map(\.requestOverrides) == [
+        LLMRequestOverrides(model: "gpt-5", reasoningEffort: "high"), nil,
+    ])
     #expect(presets.map(\.action) == [
         .prompt(instruction: "Fix grammar only.", progressLabel: "Proofreading"),
         .prompt(instruction: "Make this concise.", progressLabel: "Tightening"),
+    ])
+}
+
+@Test("Prompt folder creation does not parse a manifest that needs repair")
+func promptStoreCreatesFolderWithoutParsing() throws {
+    let fileManager = FileManager.default
+    let root = fileManager.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    let defaults = root.appendingPathComponent("defaults", isDirectory: true)
+    let destination = root.appendingPathComponent("prompts", isDirectory: true)
+    try fileManager.createDirectory(at: defaults, withIntermediateDirectories: true)
+    defer { try? fileManager.removeItem(at: root) }
+    try "not valid yaml".write(
+        to: defaults.appendingPathComponent("prompts.yaml"), atomically: true, encoding: .utf8)
+
+    let created = try PromptStore.ensureCreated(
+        at: destination, defaultsURL: defaults, fileManager: fileManager)
+
+    #expect(created == destination)
+    #expect(fileManager.fileExists(atPath: destination.appendingPathComponent("prompts.yaml").path))
+}
+
+@Test("Smart Edit request overrides fall back field by field")
+func smartEditRequestOverridesResolveDefaults() {
+    let defaults = CopilotCLIProvider.requestConfig(
+        defaultModel: "default-model",
+        defaultReasoningEffort: "medium",
+        overrides: nil)
+    #expect(defaults.model == "default-model")
+    #expect(defaults.reasoningEffort == "medium")
+
+    let modelOnly = CopilotCLIProvider.requestConfig(
+        defaultModel: "default-model",
+        defaultReasoningEffort: "medium",
+        overrides: LLMRequestOverrides(model: " custom-model ", reasoningEffort: ""))
+    #expect(modelOnly.model == "custom-model")
+    #expect(modelOnly.reasoningEffort == "medium")
+
+    let effortOnly = CopilotCLIProvider.requestConfig(
+        defaultModel: "default-model",
+        defaultReasoningEffort: "medium",
+        overrides: LLMRequestOverrides(model: nil, reasoningEffort: " high "))
+    #expect(effortOnly.model == "default-model")
+    #expect(effortOnly.reasoningEffort == "high")
+}
+
+@Test("Smart Edit warmup keeps unique resolved configurations within the sidecar limit")
+func smartEditWarmConfigs() {
+    let configs = CopilotCLIProvider.warmConfigs(
+        executable: "/usr/local/bin/copilot",
+        defaultModel: "default-model",
+        defaultReasoningEffort: "medium",
+        overrides: [
+            LLMRequestOverrides(model: "default-model", reasoningEffort: "medium")!,
+            LLMRequestOverrides(model: "fast-model", reasoningEffort: "none")!,
+            LLMRequestOverrides(model: "fast-model", reasoningEffort: "none")!,
+            LLMRequestOverrides(model: "other-model", reasoningEffort: nil)!,
+            LLMRequestOverrides(model: "fourth-model", reasoningEffort: "low")!,
+        ])
+
+    #expect(configs == [
+        CopilotACPConfig(
+            executable: "/usr/local/bin/copilot",
+            model: "default-model",
+            reasoningEffort: "medium"),
+        CopilotACPConfig(
+            executable: "/usr/local/bin/copilot",
+            model: "fast-model",
+            reasoningEffort: "none"),
+        CopilotACPConfig(
+            executable: "/usr/local/bin/copilot",
+            model: "other-model",
+            reasoningEffort: "medium"),
     ])
 }
 
@@ -1645,7 +1740,8 @@ func dynamicPromptButtonsRouteLoadedActions() {
     let first = PanelPreset(
         id: "first", title: "First",
         action: .prompt(instruction: "First prompt", progressLabel: "First pass"),
-        symbol: "1.circle", progressLabel: "First pass")
+        symbol: "1.circle", progressLabel: "First pass",
+        requestOverrides: LLMRequestOverrides(model: "fast-model", reasoningEffort: "low"))
     let second = PanelPreset(
         id: "second", title: "Second",
         action: .prompt(instruction: "Second prompt", progressLabel: "Second pass"),
@@ -1662,7 +1758,11 @@ func dynamicPromptButtonsRouteLoadedActions() {
 
     model.activateAction(at: 1)
     #expect(calls == [.prompt(instruction: "First prompt", progressLabel: "First pass")])
+    #expect(model.requestOverrides == LLMRequestOverrides(model: "fast-model", reasoningEffort: "low"))
     #expect(model.dynamicCustomActionIndex == 2)
+
+    model.selectCustomInstruction()
+    #expect(model.requestOverrides == nil)
 }
 
 @Test("Smart Edit width grows with loaded prompt buttons")

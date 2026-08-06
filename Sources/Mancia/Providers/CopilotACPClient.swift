@@ -63,7 +63,7 @@ actor CopilotACPClient {
         let line = try await request(
             method: "session/new",
             params: ["cwd": workingDir.path, "mcpServers": []],
-            timeout: 15
+            timeout: 30
         )
         guard let sessionID = Self.sessionID(fromNewSessionResponse: line) else {
             throw ProviderError.emptyOutput

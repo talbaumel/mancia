@@ -82,8 +82,8 @@ final class AppSettings {
     var confirmWholeDocumentReplace: Bool {
         didSet { defaults.set(confirmWholeDocumentReplace, forKey: Key.confirmWholeDocumentReplace) }
     }
-    /// When true (default), completing a text selection automatically opens
-    /// the ribbon. The global shortcut and menu command remain available when off.
+    /// When true, completing a text selection automatically opens the ribbon.
+    /// The global shortcut and menu command remain available when off.
     var showRibbonOnTextSelection: Bool {
         didSet { defaults.set(showRibbonOnTextSelection, forKey: Key.showRibbonOnTextSelection) }
     }
@@ -160,7 +160,7 @@ final class AppSettings {
         self.confirmWholeDocumentReplace =
             defaults.object(forKey: Key.confirmWholeDocumentReplace) as? Bool ?? true
         self.showRibbonOnTextSelection =
-            defaults.object(forKey: Key.showRibbonOnTextSelection) as? Bool ?? true
+            defaults.object(forKey: Key.showRibbonOnTextSelection) as? Bool ?? false
         self.smartEditLaserColorHex = Self.normalizedColorHex(
             defaults.string(forKey: Key.smartEditLaserColor))
         self.hideMenuBarIcon = defaults.bool(forKey: Key.hideMenuBarIcon)

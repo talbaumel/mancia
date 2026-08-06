@@ -198,6 +198,7 @@ enum SelectionCapture {
     static func perform(_ command: TargetEditCommand, in result: SelectionCaptureResult) async {
         guard isTargetAlive(result) else { return }
         await activateTarget(result)
+        let pasteboardChangeCount = NSPasteboard.general.changeCount
         switch command {
         case .selectAll: postCommandKey(KeyCode.a, to: result)
         case .copy: postCommandKey(KeyCode.c, to: result)
@@ -205,6 +206,13 @@ enum SelectionCapture {
         case .cut: postCommandKey(KeyCode.x, to: result)
         case .undo: postCommandKey(KeyCode.z, to: result)
         case .redo: postCommandKey(KeyCode.z, to: result, flags: [.maskCommand, .maskShift])
+        }
+        if command == .copy || command == .cut {
+            await waitForPasteboardChange(after: pasteboardChangeCount)
+        } else {
+            // `postToPid` queues delivery. Give WebKit a run-loop turn before
+            // the ribbon retakes key status.
+            try? await Task.sleep(for: .milliseconds(80))
         }
     }
 
@@ -218,6 +226,14 @@ enum SelectionCapture {
         guard let targetApp = result.targetApp else { return }
         targetApp.activate(options: [.activateAllWindows])
         try? await Task.sleep(for: .milliseconds(60))
+    }
+
+    private static func waitForPasteboardChange(after changeCount: Int) async {
+        var elapsed = 0
+        while NSPasteboard.general.changeCount == changeCount, elapsed < 600 {
+            try? await Task.sleep(for: .milliseconds(30))
+            elapsed += 30
+        }
     }
 
     /// The target app is gone (quit/crashed) — posting keystrokes to a dead or

@@ -337,6 +337,11 @@ final class PanelModel {
 
     var canRunPrimary: Bool { !isCustomInstructionSelected || hasCustomInstruction }
 
+    var requestOverrides: LLMRequestOverrides? {
+        guard case .preset(let preset) = actionChoice else { return nil }
+        return preset.requestOverrides
+    }
+
     /// Custom is the only state that expands the ribbon. Every other phase uses
     /// one stable width so starting or finishing a request never moves the UI.
     var prefersExpandedRibbon: Bool {

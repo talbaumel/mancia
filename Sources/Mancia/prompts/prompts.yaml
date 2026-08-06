@@ -4,19 +4,27 @@ prompts:
     title: Improve
     symbol: wand.and.rays
     progress: Improving
+    overide_model: ""
+    overide_reasoning_effort: ""
     enabled: true
   - file: sharpen.md
     title: Sharpen
     symbol: target
     progress: Sharpening
+    overide_model: ""
+    overide_reasoning_effort: ""
     enabled: true
   - file: plan-first.md
     title: Plan first
     symbol: checklist
     progress: Planning
+    overide_model: ""
+    overide_reasoning_effort: ""
     enabled: true
   - file: tighten.md
     title: Tighten
     symbol: arrow.down.right.and.arrow.up.left
     progress: Tightening
+    overide_model: ""
+    overide_reasoning_effort: ""
     enabled: true

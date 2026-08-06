@@ -35,6 +35,8 @@ enum PromptStore {
         var title: String?
         var symbol: String?
         var progress: String?
+        var overideModel: String?
+        var overideReasoningEffort: String?
         var enabled = true
     }
 
@@ -51,6 +53,19 @@ enum PromptStore {
         defaultsURL: URL? = nil,
         fileManager: FileManager = .default
     ) throws -> [PanelPreset] {
+        let directory = try ensureCreated(
+            at: directoryURL, defaultsURL: defaultsURL, fileManager: fileManager)
+        let manifestURL = directory.appendingPathComponent("prompts.yaml")
+        let yaml = try String(contentsOf: manifestURL, encoding: .utf8)
+        return try load(yaml: yaml, from: directory, fileManager: fileManager)
+    }
+
+    @discardableResult
+    static func ensureCreated(
+        at directoryURL: URL? = nil,
+        defaultsURL: URL? = nil,
+        fileManager: FileManager = .default
+    ) throws -> URL {
         let directory = try directoryURL ?? defaultURL(fileManager: fileManager)
         if !fileManager.fileExists(atPath: directory.path) {
             guard let defaults = defaultsURL ?? bundledDefaultsURL(fileManager: fileManager) else {
@@ -62,9 +77,7 @@ enum PromptStore {
                 attributes: [.posixPermissions: 0o700])
             try fileManager.copyItem(at: defaults, to: directory)
         }
-        let manifestURL = directory.appendingPathComponent("prompts.yaml")
-        let yaml = try String(contentsOf: manifestURL, encoding: .utf8)
-        return try load(yaml: yaml, from: directory, fileManager: fileManager)
+        return directory
     }
 
     static func load(
@@ -93,7 +106,10 @@ enum PromptStore {
                 title: title,
                 action: .prompt(instruction: prompt, progressLabel: progress),
                 symbol: symbol,
-                progressLabel: progress)
+                progressLabel: progress,
+                requestOverrides: LLMRequestOverrides(
+                    model: entry.overideModel,
+                    reasoningEffort: entry.overideReasoningEffort))
         }
     }
 
@@ -122,6 +138,8 @@ enum PromptStore {
             case "title": current?.title = value
             case "symbol": current?.symbol = value
             case "progress": current?.progress = value
+            case "overide_model": current?.overideModel = value
+            case "overide_reasoning_effort": current?.overideReasoningEffort = value
             case "enabled":
                 guard value == "true" || value == "false" else {
                     throw StoreError.invalidLine(number: index + 1)

@@ -38,6 +38,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         selectionMonitor.start()
         self.selectionMonitor = selectionMonitor
+
+        warmConfiguredProviders()
+    }
+
+    private func warmConfiguredProviders() {
+        let overrides = (try? PromptStore.loadOrCreate())?
+            .compactMap(\.requestOverrides) ?? []
+        Task { [provider] in
+            await provider.prepareForPanel(overrides: overrides)
+        }
     }
 
     func applicationShouldHandleReopen(

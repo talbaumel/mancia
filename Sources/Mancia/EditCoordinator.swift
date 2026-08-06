@@ -29,6 +29,7 @@ final class EditCoordinator {
     private var capturing = false
     private var pendingAction: EditAction?
     private var pendingNote: String?
+    private var pendingRequestOverrides: LLMRequestOverrides?
     private var pendingTargetEdits: [TargetEditCommand] = []
     private var pendingKeyAndClose: TargetKeyStroke?
     private var pendingOops = false
@@ -60,7 +61,10 @@ final class EditCoordinator {
     }
 
     private func wire() {
-        model.onPerform = { [weak self] action, note in self?.perform(action, note: note) }
+        model.onPerform = { [weak self] action, note in
+            guard let self else { return }
+            self.perform(action, note: note, requestOverrides: self.model.requestOverrides)
+        }
         model.onOops = { [weak self] in self?.performOops() }
         model.onSnippet = { [weak self] snippet in self?.performSnippet(snippet) }
         model.onUndoVersion = { [weak self] in self?.undoLastVersion() ?? false }
@@ -86,6 +90,7 @@ final class EditCoordinator {
         autoCloseTask = nil
         pendingAction = nil
         pendingNote = nil
+        pendingRequestOverrides = nil
         pendingTargetEdits = []
         pendingKeyAndClose = nil
         pendingOops = false
@@ -140,16 +145,22 @@ final class EditCoordinator {
                 performOops()
             } else if let pending = pendingAction {
                 let note = pendingNote
+                let requestOverrides = pendingRequestOverrides
                 pendingAction = nil
                 pendingNote = nil
-                perform(pending, note: note)
+                pendingRequestOverrides = nil
+                perform(pending, note: note, requestOverrides: requestOverrides)
             }
         }
     }
 
     // MARK: - Actions
 
-    private func perform(_ action: EditAction, note: String? = nil) {
+    private func perform(
+        _ action: EditAction,
+        note: String? = nil,
+        requestOverrides: LLMRequestOverrides? = nil
+    ) {
         // Fired before the background capture finished: queue it and show the
         // spinner; it runs the moment the selection is ready.
         if capturing {
@@ -157,6 +168,7 @@ final class EditCoordinator {
             pendingSnippet = nil
             pendingAction = action
             pendingNote = note
+            pendingRequestOverrides = requestOverrides
             model.runningTitle = action.progressLabel
             model.phase = .running
             return
@@ -185,7 +197,7 @@ final class EditCoordinator {
                 return
             }
             do {
-                let output = try await provider.complete(prompt)
+                let output = try await provider.complete(prompt, overrides: requestOverrides)
                 if Task.isCancelled { return }
                 guard let capture else { return }
                 // Gate a whole-document overwrite behind explicit confirmation:
@@ -219,6 +231,7 @@ final class EditCoordinator {
         if capturing {
             pendingAction = nil
             pendingNote = nil
+            pendingRequestOverrides = nil
             pendingSnippet = nil
             pendingOops = true
             model.runningTitle = "Fixing keyboard layout"
@@ -262,6 +275,7 @@ final class EditCoordinator {
         if capturing {
             pendingAction = nil
             pendingNote = nil
+            pendingRequestOverrides = nil
             pendingOops = false
             pendingSnippet = snippet
             model.runningTitle = "Pasting snippet"
@@ -336,6 +350,7 @@ final class EditCoordinator {
         }
         pendingAction = nil
         pendingNote = nil
+        pendingRequestOverrides = nil
         pendingTargetEdits = []
         pendingOops = false
         pendingSnippet = nil
@@ -545,6 +560,7 @@ final class EditCoordinator {
         if capturing {
             pendingAction = nil
             pendingNote = nil
+            pendingRequestOverrides = nil
             model.phase = .idle
             ribbon.focus()
             return
@@ -586,7 +602,8 @@ final class EditCoordinator {
 
     private func warmProvider() {
         guard let provider = provider as? WarmableLLMProvider else { return }
-        Task { await provider.prepareForPanel() }
+        let overrides = model.presets.compactMap(\.requestOverrides)
+        Task { await provider.prepareForPanel(overrides: overrides) }
     }
 
     private func warmProviderAfterClose() {

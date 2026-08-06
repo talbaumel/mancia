@@ -3,18 +3,19 @@
 /// The warm session is single-use: once a prompt is sent, the session id is
 /// discarded so selected text never carries into a later edit.
 actor CopilotACPSidecar {
-    private var client: CopilotACPClient?
-    private var config: CopilotACPConfig?
-    private var warmSessionID: String?
+    static let maximumClients = 3
+    private var clients: [CopilotACPConfig: CopilotACPClient] = [:]
+    private var warmSessionIDs: [CopilotACPConfig: String] = [:]
+    private var recency: [CopilotACPConfig] = []
     /// In-flight client launch, shared by concurrent callers so only one
     /// `copilot --acp` process is ever started per config.
-    private var starting: Task<CopilotACPClient, Error>?
+    private var starting: [CopilotACPConfig: Task<CopilotACPClient, Error>] = [:]
 
     func prepare(config newConfig: CopilotACPConfig) async {
         do {
             _ = try await warmSession(config: newConfig)
         } catch {
-            await reset()
+            await reset(config: newConfig)
         }
     }
 
@@ -22,15 +23,15 @@ actor CopilotACPSidecar {
         do {
             let client = try await client(config: newConfig)
             let sessionID: String
-            if let warmSessionID {
+            if let warmSessionID = warmSessionIDs.removeValue(forKey: newConfig) {
                 sessionID = warmSessionID
-                self.warmSessionID = nil
             } else {
                 sessionID = try await client.newSession()
             }
+            touch(newConfig)
             return try await client.prompt(sessionID: sessionID, text: prompt)
         } catch {
-            await reset()
+            await reset(config: newConfig)
             throw error
         }
     }
@@ -40,18 +41,22 @@ actor CopilotACPSidecar {
     func availableModels(config newConfig: CopilotACPConfig) async -> [CopilotModel] {
         do {
             _ = try await warmSession(config: newConfig)
-            return await client?.availableModels() ?? []
+            return await clients[newConfig]?.availableModels() ?? []
         } catch {
-            await reset()
+            await reset(config: newConfig)
             return []
         }
     }
 
     private func warmSession(config newConfig: CopilotACPConfig) async throws -> String {
-        if let warmSessionID, config == newConfig { return warmSessionID }
+        if let warmSessionID = warmSessionIDs[newConfig] {
+            touch(newConfig)
+            return warmSessionID
+        }
         let client = try await client(config: newConfig)
         let sessionID = try await client.newSession()
-        warmSessionID = sessionID
+        warmSessionIDs[newConfig] = sessionID
+        touch(newConfig)
         return sessionID
     }
 
@@ -66,39 +71,50 @@ actor CopilotACPSidecar {
     /// rather than repeated, and the check-then-store below runs with no
     /// `await` between the two, which is what makes it atomic.
     private func client(config newConfig: CopilotACPConfig) async throws -> CopilotACPClient {
-        if let client, config == newConfig { return client }
-        if let starting, config == newConfig { return try await starting.value }
+        if let client = clients[newConfig] {
+            touch(newConfig)
+            return client
+        }
+        if let task = starting[newConfig] { return try await task.value }
 
-        let stale = client
-        client = nil
-        warmSessionID = nil
-        config = newConfig
         let task = Task {
-            // Tear the old process down inside the task so the state above is
-            // already published before this first suspends.
-            if let stale { await stale.stop() }
             return try await CopilotACPClient(config: newConfig)
         }
-        starting = task
-        defer { starting = nil }
+        starting[newConfig] = task
+        defer { starting.removeValue(forKey: newConfig) }
         do {
             let created = try await task.value
-            client = created
+            clients[newConfig] = created
+            touch(newConfig)
+            await evictClientsIfNeeded(keeping: newConfig)
             return created
         } catch {
-            config = nil
             throw error
         }
     }
 
-    private func reset() async {
-        starting?.cancel()
-        starting = nil
-        warmSessionID = nil
-        config = nil
-        if let client {
+    private func touch(_ config: CopilotACPConfig) {
+        recency.removeAll { $0 == config }
+        recency.append(config)
+    }
+
+    private func evictClientsIfNeeded(keeping config: CopilotACPConfig) async {
+        while clients.count > Self.maximumClients,
+              let staleConfig = recency.first(where: { $0 != config }) {
+            recency.removeAll { $0 == staleConfig }
+            warmSessionIDs.removeValue(forKey: staleConfig)
+            if let client = clients.removeValue(forKey: staleConfig) {
+                await client.stop()
+            }
+        }
+    }
+
+    private func reset(config: CopilotACPConfig) async {
+        starting.removeValue(forKey: config)?.cancel()
+        warmSessionIDs.removeValue(forKey: config)
+        recency.removeAll { $0 == config }
+        if let client = clients.removeValue(forKey: config) {
             await client.stop()
-            self.client = nil
         }
     }
 }

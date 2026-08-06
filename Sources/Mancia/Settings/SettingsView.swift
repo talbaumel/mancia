@@ -33,6 +33,7 @@ struct SettingsView: View {
     @State private var accessibilityTrusted = false
     @State private var shortcut: String?
     @State private var advancedExpanded = false
+    @State private var settingsFolderError: String?
 
     var body: some View {
         Form {
@@ -56,7 +57,20 @@ struct SettingsView: View {
             }
 
             Section("Editing") {
-                Toggle("Show ribbon when text is selected", isOn: $settings.showRibbonOnTextSelection)
+                Toggle(
+                    "Show ribbon when text is selected (Experimental)",
+                    isOn: $settings.showRibbonOnTextSelection)
+                Button {
+                    openSettingsFolder()
+                } label: {
+                    Label("Open settings folder", systemImage: "folder")
+                }
+                if let settingsFolderError {
+                    Text(settingsFolderError)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 HStack {
                     ColorPicker(
                         "Smart Edit laser",
@@ -317,6 +331,20 @@ struct SettingsView: View {
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(string, forType: .string)
+    }
+
+    private func openSettingsFolder() {
+        do {
+            let promptsURL = try PromptStore.ensureCreated()
+            let url = promptsURL.deletingLastPathComponent()
+            guard NSWorkspace.shared.open(url) else {
+                settingsFolderError = "The settings folder could not be opened."
+                return
+            }
+            settingsFolderError = nil
+        } catch {
+            settingsFolderError = error.localizedDescription
+        }
     }
 
     /// Replace the cached picker list with what the CLI actually offers now.
