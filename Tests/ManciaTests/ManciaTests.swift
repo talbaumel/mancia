@@ -1833,6 +1833,17 @@ func actionShortcutLabels() {
 }
 
 @MainActor
+@Test("Every numbered ribbon button exposes a positional hover label")
+func numberedButtonShortcutLabels() {
+    let model = PanelModel()
+    #expect((0..<9).map { model.numberedButtonShortcut(at: $0) } == [
+        "⌘1", "⌘2", "⌘3", "⌘4", "⌘5", "⌘6", "⌘7", "⌘8", "⌘9",
+    ])
+    #expect(model.numberedButtonShortcut(at: -1) == nil)
+    #expect(model.numberedButtonShortcut(at: 9) == nil)
+}
+
+@MainActor
 @Test("Every action exposes its matching icon")
 func actionSymbols() {
     let model = PanelModel()

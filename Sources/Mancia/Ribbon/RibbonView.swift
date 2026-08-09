@@ -44,6 +44,7 @@ struct RibbonView: View {
     /// The ring reads the model, which is the stop the keyboard is actually on.
     @FocusState private var focus: PanelModel.Cell?
     @State private var hoveredAction: Int?
+    @State private var hoveredCompactCell: PanelModel.Cell?
     @State private var customRunHovered = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -178,17 +179,19 @@ struct RibbonView: View {
         HStack(spacing: 8) {
             compactButton(
                 "Oops", symbol: "keyboard", width: RibbonPlacement.compactOopsWidth,
-                cell: .oops, help: "Switch English and Hebrew keyboard layout"
+                cell: .oops, shortcutIndex: 0,
+                help: "Switch English and Hebrew keyboard layout"
             ) { model.runOops() }
             compactButton(
                 "Snippets", symbol: "doc.on.clipboard",
                 width: RibbonPlacement.compactSnippetsWidth,
-                cell: .snippets, help: "Show local snippet keys"
+                cell: .snippets, shortcutIndex: 1, help: "Show local snippet keys"
             ) { model.showSnippets() }
             compactButton(
                 "Smart Edit", symbol: "sparkles",
                 width: RibbonPlacement.compactSmartEditWidth,
-                cell: .smartEdit, help: "Show AI-powered editing controls"
+                cell: .smartEdit, shortcutIndex: 2,
+                help: "Show AI-powered editing controls"
             ) { model.showSmartEdit() }
         }
     }
@@ -200,7 +203,8 @@ struct RibbonView: View {
                 compactButton(
                     snippet.title, symbol: nil,
                     width: RibbonPlacement.compactSnippetWidth(for: snippet.title),
-                    cell: .snippet(index), help: "Paste \(snippet.title)"
+                    cell: .snippet(index), shortcutIndex: index,
+                    help: "Paste \(snippet.title)"
                 ) { model.runSnippet(snippet) }
             }
         }
@@ -211,13 +215,21 @@ struct RibbonView: View {
         symbol: String?,
         width: CGFloat,
         cell: PanelModel.Cell,
+        shortcutIndex: Int,
         help: String,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
+        let shortcut = model.numberedButtonShortcut(at: shortcutIndex) ?? ""
+        let isHovered = hoveredCompactCell == cell
+        return Button(action: action) {
             HStack(spacing: 6) {
                 if let symbol { Image(systemName: symbol) }
-                Text(title).lineLimit(1).truncationMode(.tail)
+                ZStack {
+                    Text(title).opacity(isHovered ? 0 : 1)
+                    Text(shortcut).opacity(isHovered ? 1 : 0)
+                }
+                .lineLimit(1)
+                .truncationMode(.tail)
             }
             .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(RibbonPalette.text)
@@ -232,7 +244,17 @@ struct RibbonView: View {
         .ribbonFocusRing(model.focusedCell == cell, radius: 8, inset: 0)
         .disabled(locked)
         .opacity(locked ? 0.5 : 1)
-        .help(help)
+        .help(shortcut.isEmpty ? help : "\(help) (\(shortcut))")
+        .onHover { isHovering in
+            guard isLive else { return }
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.1)) {
+                if isHovering {
+                    hoveredCompactCell = cell
+                } else if hoveredCompactCell == cell {
+                    hoveredCompactCell = nil
+                }
+            }
+        }
         .accessibilityLabel(title)
         .accessibilityIdentifier(title.replacingOccurrences(of: " ", with: ""))
     }

@@ -348,10 +348,17 @@ final class PanelModel {
         isCustomInstructionSelected
     }
 
+    /// The visible keyboard hint for a numbered button. Numbered shortcuts
+    /// follow the currently visible ribbon menu, so every menu uses the same
+    /// positional formatter.
+    func numberedButtonShortcut(at index: Int) -> String? {
+        (0..<9).contains(index) ? "⌘\(index + 1)" : nil
+    }
+
     /// The visible keyboard hint for an action. Keeping this beside the action
     /// catalog guarantees hover labels and actual key routing stay in lockstep.
     func actionShortcut(at index: Int) -> String? {
-        dynamicActionIndices.contains(index) && index < 9 ? "⌘\(index + 1)" : nil
+        dynamicActionIndices.contains(index) ? numberedButtonShortcut(at: index) : nil
     }
 
     var customSubmitTitle: String { phase == .running ? "Working" : "Run" }
