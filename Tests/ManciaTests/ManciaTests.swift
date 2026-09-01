@@ -1595,6 +1595,14 @@ func keyboardLayoutConversionToEnglish() {
     #expect(conversion.language == .english)
 }
 
+@Test("Oops converts Shift-modified Hebrew-layout keystrokes to English")
+func keyboardLayoutConversionFromShiftedHebrew() {
+    let conversion = KeyboardLayoutConverter.conversion(of: "שׁ„וֹ״₪")
+
+    #expect(conversion.text == "ADU\"&")
+    #expect(conversion.language == .english)
+}
+
 @Test("The action strip exposes all four built-ins in shortcut order")
 func presetListShape() {
     #expect(PanelPreset.all == [.improve, .sharpen, .planFirst, .tighten])

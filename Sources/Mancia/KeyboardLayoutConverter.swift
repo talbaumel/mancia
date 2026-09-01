@@ -30,6 +30,12 @@ enum KeyboardLayoutConverter {
         var mapping = Dictionary(uniqueKeysWithValues: zip(hebrewKeys, englishKeys))
         // Some apps produce an ASCII apostrophe for the Hebrew W key.
         mapping["'"] = "w"
+        // Unambiguous output from Shift-modified keys in macOS's Hebrew layout.
+        mapping["שׁ"] = "A"
+        mapping["„"] = "D"
+        mapping["וֹ"] = "U"
+        mapping["״"] = "\""
+        mapping["₪"] = "&"
         return mapping
     }()
 
