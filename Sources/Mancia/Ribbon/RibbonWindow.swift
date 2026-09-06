@@ -12,6 +12,8 @@ import SwiftUI
 @MainActor
 final class RibbonWindow: NSObject {
     private let model: PanelModel
+    /// Read for the swoosh color at every rebuild, so a change made in
+    /// Settings is in force the next time the lane opens.
     private let settings: AppSettings
     private var panel: KeyablePanel?
     private var hosting: NSHostingView<RibbonView>?
@@ -27,20 +29,11 @@ final class RibbonWindow: NSObject {
     /// target app briefly owns focus again: a fresh selection captured for a
     /// new cycle, and a landed paste the lane was found covering.
     private var selectionRect: CGRect?
-    /// Mouse position captured at presentation time. Held while the lane is
-    /// open so content-driven resizes do not chase later pointer movement.
-    private var pointerLocation: CGPoint?
     /// The edge the lane currently hangs from, which decides both the side it
     /// slides in from and — fed back through `Context` — where it stays for
     /// the rest of the session. Cleared by `show()`.
     private var currentAnchor: RibbonPlacement.Anchor?
     private var screenObserver: (any NSObjectProtocol)?
-    private var localMouseMonitor: Any?
-    private var globalMouseMonitor: Any?
-    private var globalKeyMonitor: Any?
-    /// A nonactivating panel can expose one physical key event to both local
-    /// and global monitor paths. The timestamp keeps it to one action.
-    private var lastNumberEventTimestamp: TimeInterval?
     /// Bumped on every `show()`, so an exit animation still in flight when a
     /// new session opens cannot order the new lane out.
     private var presentationSeq = 0
@@ -49,13 +42,15 @@ final class RibbonWindow: NSObject {
     /// was consumed (used to cancel the post-apply auto-close and handle the
     /// lane's non-key-equivalent controls).
     var onKeyDown: ((NSEvent) -> Bool)?
-    /// Invoked for a key outside the ribbon's vocabulary so it can be replayed
-    /// to the target app before the session closes.
-    var onUnhandledKey: ((NSEvent) -> Void)?
     /// Invoked by ⌘, — the app has no menu bar to own this shortcut.
     var onOpenSettings: (() -> Void)?
-    /// Invoked by editing shortcuts when a ribbon control, rather than Custom's field, has focus.
-    var onEditTarget: ((TargetEditCommand) -> Void)?
+    /// Invoked on any mouse activity over the lane — a click, or the pointer
+    /// simply moving across it. `EditCoordinator` has no view of AppKit mouse
+    /// events of its own (`RibbonWindow` owns the panel), so this is the seam
+    /// it uses to pause the post-apply auto-close beat the same way a
+    /// keystroke already does: a user reaching for Undo with the mouse is
+    /// still working the session, even before the click lands.
+    var onPointerActivity: (() -> Void)?
 
     init(model: PanelModel, settings: AppSettings) {
         self.model = model
@@ -83,11 +78,9 @@ final class RibbonWindow: NSObject {
         self.panel = panel
         hostWindow = HostWindowProbe.frontmostWindow()
         selectionRect = SelectionCapture.selectionScreenRect()
-        pointerLocation = NSEvent.mouseLocation
         currentAnchor = nil
         let resolution = resolveFrame()
         observeScreenChanges()
-        observeOutsideEvents()
         present(panel, at: resolution.frame)
     }
 
@@ -97,7 +90,6 @@ final class RibbonWindow: NSObject {
     func close() {
         guard let panel, panel.isVisible else { return }
         stopObservingScreenChanges()
-        stopObservingOutsideEvents()
         let token = presentationSeq
         let resting = panel.frame
         let reduced = reduceMotion
@@ -129,14 +121,6 @@ final class RibbonWindow: NSObject {
         guard let panel, panel.isVisible else { return }
         panel.makeKeyAndOrderFront(nil)
         if model.focusedCell != .none { model.focusSeq &+= 1 }
-    }
-
-    /// Leave the lane visible while returning key status to the target app.
-    /// Some non-AppKit editors reject PID-targeted editing commands while a
-    /// foreign nonactivating panel is still the key window.
-    func yieldFocus() {
-        guard let panel, panel.isVisible, panel.isKeyWindow else { return }
-        panel.resignKey()
     }
 
     /// Whether the lane still holds key status.
@@ -196,7 +180,6 @@ final class RibbonWindow: NSObject {
         // cannot answer leaves the last good host in place rather than
         // demoting the lane to the screen.
         if let host = HostWindowProbe.frontmostWindow() { hostWindow = host }
-        pointerLocation = NSEvent.mouseLocation
         currentAnchor = nil
         reposition()
     }
@@ -302,7 +285,7 @@ final class RibbonWindow: NSObject {
     private func content(width: CGFloat, anchor: RibbonPlacement.Anchor) -> RibbonView {
         RibbonView(
             model: model, width: width, anchor: anchor,
-            laserColor: Color(nsColor: settings.smartEditLaserColor),
+            swooshColor: Color(nsColor: settings.swooshColor),
             // Deferred a turn on purpose: the callback fires from inside
             // SwiftUI's update, and measuring before that update has settled
             // reports the height the lane is leaving, not the one it wants.
@@ -318,21 +301,14 @@ final class RibbonWindow: NSObject {
     ) -> RibbonView {
         RibbonView(
             model: model, width: width, anchor: anchor,
-            laserColor: Color(nsColor: settings.smartEditLaserColor), isLive: false)
+            swooshColor: Color(nsColor: settings.swooshColor), isLive: false)
     }
 
     private func currentContext() -> RibbonPlacement.Context {
         guard let screen = targetScreen() else {
             return .init(screenFrame: .zero, visibleFrame: .zero)
         }
-        let compactWidth = model.snippetsExpanded
-            ? RibbonPlacement.snippetsWidth(titles: model.snippets.map(\.title))
-            : RibbonPlacement.compactWidth
         let expanded = model.prefersExpandedRibbon
-        let preferredWidth = model.smartEditExpanded
-            ? RibbonPlacement.smartEditWidth(
-                presets: model.presets, customExpanded: expanded)
-            : compactWidth
         return .init(
             screenFrame: screen.frame,
             visibleFrame: screen.visibleFrame,
@@ -340,10 +316,13 @@ final class RibbonWindow: NSObject {
             safeAreaTop: screen.safeAreaInsets.top,
             menuBarHidden: menuBarHidden,
             selectionRect: selectionRect,
-            pointerLocation: pointerLocation,
             establishedAnchor: currentAnchor,
-            preferredWidth: preferredWidth,
-            minimumContentWidth: preferredWidth
+            preferredWidth: expanded
+                ? RibbonPlacement.expandedWidth
+                : RibbonPlacement.standardWidth,
+            minimumContentWidth: expanded
+                ? RibbonPlacement.customMinimumWidth
+                : RibbonPlacement.minimumWidth
         )
     }
 
@@ -361,42 +340,32 @@ final class RibbonWindow: NSObject {
     /// `NSScreen.main`, which is the screen with the key window and for a
     /// menu-bar app is regularly the wrong one.
     ///
-    /// The captured pointer leads because pointer-relative placement is the
-    /// primary rule. Selection and host geometry are fallbacks only when that
-    /// point no longer belongs to a connected display.
+    /// The selection leads, because it is what the lane is placed against: a
+    /// window straddling two displays holds most of its area on one of them
+    /// and the selected sentence can be on the other. The host window stands
+    /// in when no selection rect came back — some hosts report none — and the
+    /// pointer only when neither did, since it is wherever the hand left it
+    /// rather than where the words are.
     private func targetScreen() -> NSScreen? {
-        let screens = NSScreen.screens
-        guard let index = Self.targetScreenIndex(
-            pointerLocation: pointerLocation,
-            selectionRect: selectionRect,
-            hostWindowFrame: hostWindow?.frame,
-            screenFrames: screens.map(\.frame)
-        ) else { return NSScreen.main }
-        return screens[index]
+        if let screen = screenOverlapping(selectionRect) { return screen }
+        if let screen = screenOverlapping(hostWindow?.frame) { return screen }
+        let mouse = NSEvent.mouseLocation
+        if let underMouse = NSScreen.screens.first(where: { $0.frame.contains(mouse) }) {
+            return underMouse
+        }
+        return NSScreen.main
     }
 
-    static func targetScreenIndex(
-        pointerLocation: CGPoint?,
-        selectionRect: CGRect?,
-        hostWindowFrame: CGRect?,
-        screenFrames: [CGRect]
-    ) -> Int? {
-        if let pointerLocation,
-           let index = screenFrames.firstIndex(where: { $0.contains(pointerLocation) })
-        {
-            return index
-        }
-        for rect in [selectionRect, hostWindowFrame].compactMap({ $0 }) {
-            guard let index = screenFrames.indices.max(by: {
-                overlap(screenFrames[$0], rect) < overlap(screenFrames[$1], rect)
-            }), overlap(screenFrames[index], rect) > 0 else { continue }
-            return index
-        }
-        return nil
+    /// The screen a rectangle covers most of, or `nil` when it touches none.
+    private func screenOverlapping(_ rect: CGRect?) -> NSScreen? {
+        guard let rect else { return nil }
+        let best = NSScreen.screens.max { overlap($0.frame, rect) < overlap($1.frame, rect) }
+        guard let best, overlap(best.frame, rect) > 0 else { return nil }
+        return best
     }
 
-    private static func overlap(_ lhs: CGRect, _ rhs: CGRect) -> CGFloat {
-        let intersection = lhs.intersection(rhs)
+    private func overlap(_ a: CGRect, _ b: CGRect) -> CGFloat {
+        let intersection = a.intersection(b)
         guard !intersection.isNull else { return 0 }
         return intersection.width * intersection.height
     }
@@ -420,59 +389,6 @@ final class RibbonWindow: NSObject {
             NotificationCenter.default.removeObserver(screenObserver)
         }
         screenObserver = nil
-    }
-
-    // MARK: - Outside events
-
-    private func observeOutsideEvents() {
-        guard localMouseMonitor == nil, globalMouseMonitor == nil, globalKeyMonitor == nil else {
-            return
-        }
-        let mouseDown: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
-        localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: mouseDown) {
-            [weak self] event in
-            guard let self else { return event }
-            if event.window !== panel { model.onCancel?() }
-            return event
-        }
-        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: mouseDown) {
-            [weak self] _ in
-            Task { @MainActor in self?.model.onCancel?() }
-        }
-        globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) {
-            [weak self] event in
-            let command = PanelKeyCommand.resolve(
-                characters: event.charactersIgnoringModifiers,
-                modifiers: event.modifierFlags)
-            Task { @MainActor in
-                guard let self else { return }
-                if case .activateAction(let index) = command {
-                    self.activateNumber(index, eventTimestamp: event.timestamp)
-                } else if command?.targetEditCommand != nil {
-                    // The local key-equivalent path forwards editing commands
-                    // to the captured app. Do not dismiss for the same
-                    // physical event observed globally.
-                    return
-                } else {
-                    self.model.onCancel?()
-                }
-            }
-        }
-    }
-
-    private func stopObservingOutsideEvents() {
-        if let localMouseMonitor { NSEvent.removeMonitor(localMouseMonitor) }
-        if let globalMouseMonitor { NSEvent.removeMonitor(globalMouseMonitor) }
-        if let globalKeyMonitor { NSEvent.removeMonitor(globalKeyMonitor) }
-        localMouseMonitor = nil
-        globalMouseMonitor = nil
-        globalKeyMonitor = nil
-    }
-
-    private func activateNumber(_ index: Int, eventTimestamp: TimeInterval) {
-        guard lastNumberEventTimestamp != eventTimestamp else { return }
-        lastNumberEventTimestamp = eventTimestamp
-        model.activateNumberedButton(at: index)
     }
 
     // MARK: - Construction
@@ -543,68 +459,99 @@ final class RibbonWindow: NSObject {
                 model.moveFocus(move)
                 return true
             }
-            // Return activates the focused action. Direction answers its own
+            // Return activates the focused control. Direction answers its own
             // through `onSubmit`, so it is excluded or Custom would run twice.
+            // Every other cell — including the scope-approval and
+            // whole-document review gates' own buttons — is handled generically
+            // by focus rather than by phase, so Return always does exactly what
+            // clicking the focused control would, never a global fallback.
             if PanelKeyCommand.isPrimaryReturn(
-                keyCode: event.keyCode, modifiers: event.modifierFlags),
-                model.phase != .running, model.phase != .confirm
+                keyCode: event.keyCode, modifiers: event.modifierFlags)
             {
-                switch model.focusedCell {
-                case .none:
-                    return false
-                case .oops:
-                    model.runOops()
-                    return true
-                case .snippets:
-                    model.showSnippets()
-                    return true
-                case .snippet(let index):
-                    guard model.snippets.indices.contains(index) else { return false }
-                    model.runSnippet(model.snippets[index])
-                    return true
-                case .smartEdit:
-                    model.showSmartEdit()
-                    return true
-                case .action(let index):
-                    model.activateAction(at: index)
-                    return true
-                case .run:
-                    guard model.canRunPrimary else { return false }
-                    model.runPrimary()
-                    return true
-                case .direction:
-                    return false
-                }
+                return self.activateFocusedCell()
             }
-            if PanelKeyCommand.resolve(
-                characters: event.charactersIgnoringModifiers,
-                modifiers: event.modifierFlags) != nil
-            {
-                return false
-            }
-            // Custom owns ordinary typing; Space remains native button
-            // activation everywhere else. Any other key is replayed to the
-            // target app and then dismisses the session.
-            if model.focusedCell == .direction || event.keyCode == 49 || event.keyCode == 53 {
-                return false
-            }
-            onUnhandledKey?(event)
-            return true
+            return false
         }
         panel.onToggleTarget = { [weak self] in self?.model.toggleScope() }
-        panel.onActivateAction = { [weak self] index, timestamp in
-            self?.activateNumber(index, eventTimestamp: timestamp)
-        }
+        panel.onActivateAction = { [weak self] index in self?.model.activateAction(at: index) }
         panel.onUndoVersion = { [weak self] in self?.model.undoLastVersion() ?? false }
         panel.onOpenSettings = { [weak self] in self?.onOpenSettings?() }
-        panel.onEditTarget = { [weak self] command in self?.onEditTarget?(command) }
         panel.onSubmit = { [weak self] in
             guard let model = self?.model else { return }
             // Mirror the Return key: inert while a request runs or a
             // whole-document replacement awaits confirmation.
-            guard model.phase != .running, model.phase != .confirm, model.canRunPrimary else { return }
+            guard !model.isLocked, model.canRunPrimary else { return }
             model.runPrimary()
         }
+        // Any pointer activity resets the coordinator's post-apply auto-close
+        // fuse, same as a keystroke — a user reaching for the mouse (to click
+        // Undo, say) is still working the session, not walking away from it.
+        panel.acceptsMouseMovedEvents = true
+        panel.onPointerActivity = { [weak self] in self?.onPointerActivity?() }
         return panel
+    }
+
+    /// Return's generic dispatch: invoke whatever the focused cell would do if
+    /// clicked. Mirrors each control's own click handler exactly, so Return
+    /// never becomes a second, divergent way to trigger the same control.
+    private func activateFocusedCell() -> Bool {
+        switch model.focusedCell {
+        case .none:
+            return false
+        case .action(let index):
+            if model.phase == .running, model.isActionSelected(at: index) {
+                model.onCancelRun?()
+            } else {
+                model.activateAction(at: index)
+            }
+            return true
+        case .run:
+            if model.phase == .running {
+                model.onCancelRun?()
+            } else {
+                guard model.canRunPrimary else { return false }
+                model.runPrimary()
+            }
+            return true
+        case .direction:
+            // The field answers its own Return through `onSubmit`.
+            return false
+        case .target:
+            model.toggleScope()
+            return true
+        case .scopeDecline:
+            model.onDeclinePending?()
+            return true
+        case .scopeApprove:
+            model.onApproveDocumentGeneration?()
+            return true
+        case .reviewDisclosure:
+            model.previewExpanded.toggle()
+            return true
+        case .reviewDecline:
+            model.onDeclinePending?()
+            return true
+        case .reviewApprove:
+            model.onConfirmApply?()
+            return true
+        case .appliedUndo:
+            _ = model.undoLastVersion()
+            return true
+        case .retainedDisclosure:
+            model.retainedResultExpanded.toggle()
+            return true
+        case .retainedCopy:
+            model.onCopyRetainedResult?()
+            return true
+        case .errorDetails:
+            model.errorDetailsExpanded.toggle()
+            return true
+        case .errorCopy:
+            model.copyErrorToPasteboard()
+            return true
+        case .errorRetry:
+            model.onRetry?()
+            return true
+        }
     }
 }

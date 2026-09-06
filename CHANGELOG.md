@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-05
+
+### Added
+
+- Visible selection/document targeting, separate approval before sending a
+  whole document to Copilot, and a copyable result when safe replacement cannot
+  be established.
+- Ribbon feedback for capture, generation, application, and completion, with
+  keyboard-accessible recovery and optional original/result comparison.
+- Synthetic action-quality examples and an opt-in local evaluation command.
+
+### Changed
+
+- Calmer warm-neutral surfaces, appearance-adaptive action colors, and clearer
+  focus and status contrast across the ribbon and its dialogs.
+- Ribbon action shortcuts use 1 through 5 without Command while focused.
+  Digits typed in the Custom editor remain ordinary text.
+- Action labels show their number shortcuts on hover without resizing.
+  Custom uses a compact multiline
+  editor, keeps its draft for the open session, and describes its required input.
+- Improve and Sharpen retain their coding-agent focus. Plan first requests a
+  short downstream plan with goals and verifiers. Tighten preserves uncertainty
+  and constraints while reducing length.
+- Provider status distinguishes an installed CLI from working authentication.
+  Working color is in Advanced settings.
+
+### Fixed
+
+- Cancellation before paste prevents replacement, and clipboard restoration
+  no longer overwrites a newer user copy.
+- Replacement verifies the original field and text. Version navigation no
+  longer sends blind Undo keystrokes into another app.
+- Preset inline edits preserve selection-edge whitespace. Custom can return
+  deliberately requested quotation marks and Markdown fences.
+
+## [0.3.3] - 2026-08-16
+
+### Fixed
+
+- Copilot ACP sidecars now refresh after one hour so long-running Mancia
+  sessions pick up CLI upgrades and fresh network connections. Active requests
+  finish before the retired sidecar stops, and timed-out requests no longer
+  retry through the one-shot CLI and extend the apparent hang.
+
+## [0.3.2] - 2026-08-06
+
+### Added
+
+- The swoosh — the comet that runs a control's border while its action is in
+  flight — now takes a color of your choosing, set in Settings under Editing.
+  It was the one color in the lane with no meaning riding on it: it says
+  "running", which the control's own state already says.
+
+### Fixed
+
+- Model-specific reasoning choices now refresh from Copilot CLI at launch and
+  after Settings closes. ACP sessions explicitly apply the saved model and
+  effort, preventing Copilot's prior session state from overriding them.
+
 ## [0.3.1] - 2026-08-04
 
 ### Changed

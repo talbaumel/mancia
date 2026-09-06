@@ -197,6 +197,48 @@ func argvAlwaysSandboxed() {
     }
 }
 
+@MainActor
+@Test("Unsupported model effort errors retry at the provider default")
+func unsupportedModelEffortRetriesAtDefault() async throws {
+    let suite = "mancia-test-\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("mancia-test-\(UUID().uuidString)")
+    let executable = directory.appendingPathComponent("copilot")
+    defer {
+        defaults.removePersistentDomain(forName: suite)
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try """
+    #!/bin/sh
+    for argument in "$@"; do
+      if [ "$argument" = "--acp" ]; then
+        exit 1
+      fi
+      if [ "$argument" = "--reasoning-effort" ]; then
+        echo 'Error: Reasoning effort "minimal" is not supported for model "claude-opus-5".' >&2
+        exit 1
+      fi
+    done
+    echo 'retried at model default'
+    """.write(to: executable, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes(
+        [.posixPermissions: 0o755], ofItemAtPath: executable.path
+    )
+    defaults.set(executable.path, forKey: "copilotPath")
+    defaults.set("claude-opus-5", forKey: "copilotModel")
+    defaults.set("minimal", forKey: "reasoningEffort")
+
+    let settings = AppSettings(defaults: defaults, modelCatalog: { [] })
+    let output = try await CopilotCLIProvider(settings: settings).complete("test")
+
+    #expect(output == "retried at model default\n")
+    #expect(settings.reasoningEffort == "")
+    #expect(defaults.string(forKey: "reasoningEffort") == "")
+}
+
 // MARK: - Prompt gate validation
 
 @Test("Instruction validation trims and accepts a normal instruction")
@@ -330,53 +372,33 @@ func confirmSettingDefaultsOnAndPersists() {
 }
 
 @MainActor
-@Test("Automatic selection ribbon defaults off and persists opt-in")
-func selectionRibbonSettingDefaultsOffAndPersists() {
+@Test("Swoosh color defaults to the stock accent, normalizes, and persists")
+func swooshColorNormalizesAndPersists() {
     let suite = "mancia-test-\(UUID().uuidString)"
     let defaults = UserDefaults(suiteName: suite)!
     defer { defaults.removePersistentDomain(forName: suite) }
 
     let first = AppSettings(defaults: defaults, modelCatalog: { [] })
-    #expect(first.showRibbonOnTextSelection == false)
+    #expect(first.swooshColorHex == AppSettings.defaultSwooshColorHex)
+    #expect(first.swooshColorIsDefault)
 
-    first.showRibbonOnTextSelection = true
+    // A picked color round-trips through sRGB into bare hex, and survives a
+    // relaunch.
+    first.swooshColor = NSColor(srgbRed: 1, green: 0.25, blue: 0.5, alpha: 1)
+    #expect(first.swooshColorHex == "FF4080")
+    #expect(!first.swooshColorIsDefault)
     let second = AppSettings(defaults: defaults, modelCatalog: { [] })
-    #expect(second.showRibbonOnTextSelection == true)
-}
+    #expect(second.swooshColorHex == "FF4080")
 
-@MainActor
-@Test("Smart Edit laser color defaults, normalizes, and persists")
-func smartEditLaserColorPersists() {
-    let suite = "mancia-test-\(UUID().uuidString)"
-    let defaults = UserDefaults(suiteName: suite)!
-    defer { defaults.removePersistentDomain(forName: suite) }
+    // Stored values are coerced rather than trusted.
+    #expect(AppSettings.normalizedColorHex(" #49b8ff ") == "49B8FF")
+    #expect(AppSettings.normalizedColorHex("nonsense") == AppSettings.defaultSwooshColorHex)
+    #expect(AppSettings.normalizedColorHex(nil) == AppSettings.defaultSwooshColorHex)
 
-    let first = AppSettings(defaults: defaults, modelCatalog: { [] })
-    #expect(first.smartEditLaserColorHex == AppSettings.defaultSmartEditLaserColorHex)
-
-    first.smartEditLaserColor = NSColor(
-        srgbRed: 1, green: 0.25, blue: 0.5, alpha: 1)
-    #expect(first.smartEditLaserColorHex == "FF4080")
-
-    let second = AppSettings(defaults: defaults, modelCatalog: { [] })
-    #expect(second.smartEditLaserColorHex == "FF4080")
-    #expect(AppSettings.normalizedColorHex("#49b8ff") == "49B8FF")
-    #expect(AppSettings.normalizedColorHex("invalid") == AppSettings.defaultSmartEditLaserColorHex)
-}
-
-@MainActor
-@Test("Menu bar icon visibility defaults visible and persists")
-func menuBarIconVisibilityPersists() {
-    let suite = "mancia-test-\(UUID().uuidString)"
-    let defaults = UserDefaults(suiteName: suite)!
-    defer { defaults.removePersistentDomain(forName: suite) }
-
-    let first = AppSettings(defaults: defaults, modelCatalog: { [] })
-    #expect(first.hideMenuBarIcon == false)
-
-    first.hideMenuBarIcon = true
-    let second = AppSettings(defaults: defaults, modelCatalog: { [] })
-    #expect(second.hideMenuBarIcon == true)
+    // The stock hex resolves to the color the ribbon palette already uses.
+    #expect(
+        AppSettings.color(from: AppSettings.defaultSwooshColorHex)
+            == Palette.nsColor(0x49B8FF))
 }
 
 @MainActor
@@ -517,6 +539,57 @@ func copilotModelExplicitChoiceIsRespected() {
 }
 
 @MainActor
+@Test("Live metadata clears and persists an unsupported stored reasoning effort")
+func liveMetadataClearsUnsupportedStoredReasoningEffort() {
+    let suite = "mancia-test-\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    defaults.set("claude-haiku-4.5", forKey: "copilotModel")
+    defaults.set("minimal", forKey: "reasoningEffort")
+    let live = [
+        CopilotModel(
+            id: "claude-haiku-4.5", name: "Claude Haiku 4.5",
+            supportedReasoningEfforts: []),
+    ]
+
+    let settings = AppSettings(defaults: defaults, modelCatalog: { [] })
+    #expect(settings.copilotModel == "claude-haiku-4.5")
+    #expect(settings.reasoningEffort == "minimal")
+    #expect(settings.reconcileReasoningEffort(with: live))
+    #expect(settings.reasoningEffort == "")
+    #expect(defaults.string(forKey: "reasoningEffort") == "")
+}
+
+@MainActor
+@Test("The provider reads the latest persisted model selection for each action")
+func providerReadsLatestPersistedSelection() async {
+    let suite = "mancia-test-\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    defaults.set("", forKey: "copilotModel")
+
+    let settings = AppSettings(defaults: defaults, modelCatalog: { [] })
+    let provider = CopilotCLIProvider(settings: settings)
+    settings.copilotModel = "gemini-3.5-flash"
+    settings.reasoningEffort = "minimal"
+
+    let current = await provider.config()
+    #expect(current.model == "gemini-3.5-flash")
+    #expect(current.reasoningEffort == "minimal")
+    let args = CopilotCLIProvider.arguments(
+        executable: "/opt/homebrew/bin/copilot", prompt: "edit",
+        model: current.model, reasoningEffort: current.reasoningEffort)
+    #expect(args[args.firstIndex(of: "--model")! + 1] == "gemini-3.5-flash")
+    #expect(args[args.firstIndex(of: "--reasoning-effort")! + 1] == "minimal")
+
+    let relaunched = AppSettings(defaults: defaults, modelCatalog: { [] })
+    let persisted = await CopilotCLIProvider(settings: relaunched).config()
+    #expect(persisted.model == "gemini-3.5-flash")
+    #expect(persisted.reasoningEffort == "minimal")
+}
+
+@MainActor
 @Test("First-run resolution with an empty catalog leaves the model unset")
 func copilotModelFirstRunEmptyCatalog() {
     let suite = "mancia-test-\(UUID().uuidString)"
@@ -581,12 +654,115 @@ func acpArgvDisablesAmbientContext() {
     #expect(args.contains("none"))
 }
 
-@Test("ACP failures fall back to one-shot CLI except cancellation")
+@Test("ACP failures fall back to one-shot CLI except cancellation and timeout")
 func acpFallbackPolicy() {
-    #expect(CopilotCLIProvider.shouldFallbackFromACPError(ProviderError.timedOut))
+    #expect(!CopilotCLIProvider.shouldFallbackFromACPError(ProviderError.timedOut))
     #expect(CopilotCLIProvider.shouldFallbackFromACPError(ProviderError.launchFailed("sidecar exited")))
     #expect(CopilotCLIProvider.shouldFallbackFromACPError(ProviderError.emptyOutput))
     #expect(!CopilotCLIProvider.shouldFallbackFromACPError(CancellationError()))
+}
+
+@Test("ACP sidecar reuses a fresh client and replaces it at the lifetime boundary")
+func staleACPSidecarIsReplaced() async {
+    let factory = TestACPClientFactory()
+    let sidecar = CopilotACPSidecar { _ in await factory.makeClient() }
+    let config = CopilotACPConfig(executable: "copilot", model: "", reasoningEffort: "")
+
+    await sidecar.prepare(config: config, now: 100)
+    await sidecar.prepare(config: config, now: 3_699)
+    #expect(await factory.snapshot() == .init(created: [1], stopped: []))
+
+    await sidecar.prepare(config: config, now: 3_700)
+    #expect(await factory.snapshot() == .init(created: [1, 2], stopped: [1]))
+}
+
+@Test("ACP sidecar defers expired-client retirement until an active prompt finishes")
+func activeACPSidecarIsNotStoppedDuringReplacement() async throws {
+    let factory = TestACPClientFactory(blockFirstPrompt: true)
+    let sidecar = CopilotACPSidecar { _ in await factory.makeClient() }
+    let config = CopilotACPConfig(executable: "copilot", model: "", reasoningEffort: "")
+
+    let completion = Task { try await sidecar.complete("prompt", config: config, now: 100) }
+    await factory.waitForPromptToStart()
+    await sidecar.prepare(config: config, now: 3_700)
+
+    #expect(await factory.snapshot() == .init(created: [1, 2], stopped: []))
+    await factory.releasePrompt()
+    #expect(try await completion.value == "result")
+    #expect(await factory.snapshot() == .init(created: [1, 2], stopped: [1]))
+}
+
+private actor TestACPClientFactory {
+    struct Snapshot: Equatable, Sendable {
+        let created: [Int]
+        let stopped: [Int]
+    }
+
+    private let blockFirstPrompt: Bool
+    private var nextID = 0
+    private var created: [Int] = []
+    private var stopped: [Int] = []
+    private var promptStarted = false
+    private var promptStartWaiters: [CheckedContinuation<Void, Never>] = []
+    private var promptRelease: CheckedContinuation<Void, Never>?
+
+    init(blockFirstPrompt: Bool = false) {
+        self.blockFirstPrompt = blockFirstPrompt
+    }
+
+    func makeClient() -> CopilotACPSidecar.Client {
+        nextID += 1
+        created.append(nextID)
+        return TestACPClient(id: nextID, factory: self)
+    }
+
+    func recordPromptStart(clientID: Int) async {
+        promptStarted = true
+        promptStartWaiters.forEach { $0.resume() }
+        promptStartWaiters.removeAll()
+        guard blockFirstPrompt, clientID == 1 else { return }
+        await withCheckedContinuation { promptRelease = $0 }
+    }
+
+    func waitForPromptToStart() async {
+        guard !promptStarted else { return }
+        await withCheckedContinuation { promptStartWaiters.append($0) }
+    }
+
+    func releasePrompt() {
+        promptRelease?.resume()
+        promptRelease = nil
+    }
+
+    func recordStop(clientID: Int) {
+        stopped.append(clientID)
+    }
+
+    func snapshot() -> Snapshot {
+        Snapshot(created: created, stopped: stopped)
+    }
+}
+
+private actor TestACPClient: CopilotACPClientProtocol {
+    let id: Int
+    let factory: TestACPClientFactory
+
+    init(id: Int, factory: TestACPClientFactory) {
+        self.id = id
+        self.factory = factory
+    }
+
+    func newSession() -> String { "session-\(id)" }
+    func availableModels() -> [CopilotModel] { [] }
+
+    func prompt(sessionID: String, text: String) async -> String {
+        await factory.recordPromptStart(clientID: id)
+        return "result"
+    }
+
+    func stop() async {
+        await factory.recordStop(clientID: id)
+    }
 }
 
 @Test("ACP response parsing extracts session ids and stop reasons")
@@ -621,6 +797,66 @@ func acpUpdateParsing() {
         ],
     ]
     #expect(CopilotACPClient.agentMessageChunk(from: nonText) == nil)
+}
+
+@MainActor
+@Test("ACP explicitly applies the selected model and effort to each session")
+func acpAppliesSelectedSessionConfig() async throws {
+    let suite = "mancia-test-\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("mancia-test-\(UUID().uuidString)")
+    let executable = directory.appendingPathComponent("copilot")
+    defer {
+        defaults.removePersistentDomain(forName: suite)
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try """
+    #!/bin/sh
+    model_set=0
+    effort_set=0
+    while IFS= read -r line; do
+      id=$(printf '%s' "$line" | sed -E 's/.*"id":([0-9]+).*/\\1/')
+      case "$line" in
+        *'"method":"initialize"'*)
+          printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1}}\\n' "$id"
+          ;;
+        *'"method":"session'*'new"'*)
+          printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"session-1","models":{"currentModelId":"gemini-3.5-flash","availableModels":[{"modelId":"gemini-3.5-flash","name":"Gemini 3.5 Flash"}]},"configOptions":[{"id":"model","type":"select","currentValue":"gemini-3.5-flash","options":[{"value":"gemini-3.5-flash","name":"Gemini 3.5 Flash"}]},{"id":"reasoning_effort","type":"select","currentValue":"minimal","options":[{"value":"minimal","name":"Minimal"}]}]}}\\n' "$id"
+          ;;
+        *'"configId":"model"'*)
+          model_set=1
+          printf '{"jsonrpc":"2.0","id":%s,"result":{"configOptions":[{"id":"model","type":"select","currentValue":"gemini-3.5-flash","options":[{"value":"gemini-3.5-flash","name":"Gemini 3.5 Flash"}]},{"id":"reasoning_effort","type":"select","currentValue":"minimal","options":[{"value":"minimal","name":"Minimal"}]}]}}\\n' "$id"
+          ;;
+        *'"configId":"reasoning_effort"'*)
+          effort_set=1
+          printf '{"jsonrpc":"2.0","id":%s,"result":{"configOptions":[]}}\\n' "$id"
+          ;;
+        *'"method":"session'*'prompt"'*)
+          if [ "$model_set" = 1 ] && [ "$effort_set" = 1 ]; then
+            text=configured
+          else
+            text="Execution failed: Error: Reasoning effort 'minimal' is not supported for model 'claude-opus-5'."
+          fi
+          printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"%s"}}}}\\n' "$text"
+          printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\\n' "$id"
+          ;;
+      esac
+    done
+    """.write(to: executable, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes(
+        [.posixPermissions: 0o755], ofItemAtPath: executable.path
+    )
+    defaults.set(executable.path, forKey: "copilotPath")
+    defaults.set("gemini-3.5-flash", forKey: "copilotModel")
+    defaults.set("minimal", forKey: "reasoningEffort")
+
+    let settings = AppSettings(defaults: defaults, modelCatalog: { [] })
+    let output = try await CopilotCLIProvider(settings: settings).complete("test")
+
+    #expect(output == "configured")
 }
 
 @Test("Argv appends --model when a model is set")
@@ -853,17 +1089,32 @@ func acpUsageMultiplierParsing() {
     #expect(CopilotACPClient.usageMultiplier(nil) == nil)
 }
 
-@Test("reasoningEfforts absorbs levels the catalog reports but we don't know")
-func reasoningEffortsAbsorbsNewLevels() {
+@Test("reasoning efforts narrow to the selected model and reject stale values")
+func reasoningEffortsFollowSelectedModel() {
     let models = [
-        CopilotModel(id: "a", name: "A", supportedReasoningEfforts: ["low", "ultra"]),
-        CopilotModel(id: "b", name: "B", supportedReasoningEfforts: ["ultra", "beyond"]),
+        CopilotModel(
+            id: "auto", name: "Auto",
+            supportedReasoningEfforts: ["low", "medium", "high"]),
+        CopilotModel(
+            id: "claude-haiku-4.5", name: "Claude Haiku 4.5",
+            supportedReasoningEfforts: []),
+        CopilotModel(
+            id: "gemini-3.5-flash", name: "Gemini 3.5 Flash",
+            supportedReasoningEfforts: ["minimal", "low", "medium", "high"]),
     ]
-    let levels = CopilotModelCatalog.reasoningEfforts(in: models)
-    // Known levels keep their meaningful order, new ones are appended once.
-    #expect(levels.prefix(6) == ["none", "low", "medium", "high", "xhigh", "max"])
-    #expect(levels.suffix(2) == ["ultra", "beyond"])
-    #expect(CopilotModelCatalog.reasoningEfforts(in: []) == CopilotModelCatalog.allReasoningEfforts)
+
+    #expect(CopilotModelCatalog.reasoningEfforts(for: "claude-haiku-4.5", in: models) == [])
+    #expect(CopilotModelCatalog.validatedReasoningEffort(
+        "minimal", for: "claude-haiku-4.5", in: models) == "")
+    #expect(CopilotModelCatalog.reasoningEfforts(
+        for: "gemini-3.5-flash", in: models) == ["minimal", "low", "medium", "high"])
+    #expect(CopilotModelCatalog.validatedReasoningEffort(
+        "minimal", for: "gemini-3.5-flash", in: models) == "minimal")
+    #expect(CopilotModelCatalog.reasoningEfforts(for: "", in: models)
+        == ["low", "medium", "high"])
+    // Unknown metadata cannot safely invalidate an existing user choice.
+    #expect(CopilotModelCatalog.validatedReasoningEffort(
+        "high", for: "future-model", in: models) == "high")
 }
 
 @Test("session/new model parsing skips malformed and duplicate entries")
@@ -883,6 +1134,40 @@ func acpModelsSkipMalformedEntries() {
 func acpModelsEmptyWhenAbsent() {
     #expect(CopilotACPClient.models(fromNewSessionResponse: #"{"result":{"sessionId":"abc"}}"#).isEmpty)
     #expect(CopilotACPClient.models(fromNewSessionResponse: "not json").isEmpty)
+}
+
+@Test("session/new reasoning config enriches the selected live model")
+func acpReasoningEffortsParsedFromNewSession() {
+    let line = """
+    {"result":{"sessionId":"abc","models":{"currentModelId":"gemini-3.5-flash",
+     "availableModels":[
+      {"modelId":"auto","name":"Auto"},
+      {"modelId":"claude-haiku-4.5","name":"Claude Haiku 4.5"},
+      {"modelId":"gemini-3.5-flash","name":"Gemini 3.5 Flash"}]},
+     "configOptions":[
+      {"id":"reasoning_effort","name":"Reasoning Effort","type":"select",
+       "currentValue":"minimal","options":[
+        {"value":"minimal","name":"Minimal"},{"value":"low","name":"Low"},
+        {"value":"medium","name":"Medium"},{"value":"high","name":"High"}]}]}}
+    """
+
+    let models = CopilotACPClient.models(fromNewSessionResponse: line)
+    #expect(models.first { $0.id == "auto" }?.supportedReasoningEfforts
+        == ["minimal", "low", "medium", "high"])
+    #expect(models.first { $0.id == "claude-haiku-4.5" }?.supportedReasoningEfforts == nil)
+    #expect(models.first { $0.id == "gemini-3.5-flash" }?.supportedReasoningEfforts
+        == ["minimal", "low", "medium", "high"])
+}
+
+@Test("session/new without a reasoning config marks the selected model unsupported")
+func acpMissingReasoningConfigMeansUnsupported() {
+    let line = """
+    {"result":{"sessionId":"abc","models":{"currentModelId":"claude-haiku-4.5",
+     "availableModels":[{"modelId":"claude-haiku-4.5","name":"Claude Haiku 4.5"}]},
+     "configOptions":[{"id":"mode","type":"select","currentValue":"interactive","options":[]}]}}
+    """
+    let models = CopilotACPClient.models(fromNewSessionResponse: line)
+    #expect(models.first?.supportedReasoningEfforts == [])
 }
 
 // MARK: - Merging the live listing with the cache
@@ -989,17 +1274,17 @@ func argvEnvFallback() {
 
 // MARK: - Output post-processing
 
-@Test("Post-processing trims surrounding whitespace")
-func postProcessTrims() {
-    #expect(CopilotCLIProvider.postProcess("  \n hello world \n ") == "hello world")
+@Test("Provider output preserves surrounding whitespace")
+func postProcessPreservesBoundaries() {
+    #expect(CopilotCLIProvider.postProcess("  \n hello world \n ") == "  \n hello world \n ")
 }
 
-@Test("Post-processing strips a wrapping code fence, keeping inner content")
-func postProcessStripsFence() {
+@Test("Provider leaves fence interpretation to the action")
+func postProcessPreservesFence() {
     let fenced = "```\nline one\nline two\n```"
-    #expect(CopilotCLIProvider.postProcess(fenced) == "line one\nline two")
+    #expect(CopilotCLIProvider.postProcess(fenced) == fenced)
     let langFenced = "```swift\nlet x = 1\n```"
-    #expect(CopilotCLIProvider.postProcess(langFenced) == "let x = 1")
+    #expect(CopilotCLIProvider.postProcess(langFenced) == langFenced)
 }
 
 @Test("Post-processing leaves fence-free text untouched")
@@ -1111,20 +1396,16 @@ func panelKeyCommandsResolve() {
         (",", .command, .openSettings),
         ("\r", .command, .submit),
         ("t", .command, .toggleTarget),
-        ("1", .command, .activateAction(0)),
-        ("2", .command, .activateAction(1)),
-        ("3", .command, .activateAction(2)),
-        ("4", .command, .activateAction(3)),
-        ("5", .command, .activateAction(4)),
-        ("6", .command, .activateAction(5)),
-        ("7", .command, .activateAction(6)),
-        ("8", .command, .activateAction(7)),
-        ("9", .command, .activateAction(8)),
+        ("1", [], .activateAction(0)),
+        ("2", [], .activateAction(1)),
+        ("3", [], .activateAction(2)),
+        ("4", [], .activateAction(3)),
+        ("5", [], .activateAction(4)),
     ]
     for c in cases {
         #expect(
             PanelKeyCommand.resolve(characters: c.chars, modifiers: c.mods) == c.expected,
-            "⌘-shortcut for \(c.chars) should resolve to \(c.expected)")
+            "Shortcut for \(c.chars) should resolve to \(c.expected)")
     }
 }
 
@@ -1139,41 +1420,15 @@ func panelKeyCommandsRejectNonShortcuts() {
     #expect(PanelKeyCommand.resolve(characters: "", modifiers: .command) == nil)
     #expect(PanelKeyCommand.resolve(characters: nil, modifiers: .command) == nil)
     #expect(PanelKeyCommand.resolve(characters: "\r", modifiers: []) == nil)
-    #expect(PanelKeyCommand.resolve(characters: "1", modifiers: []) == nil)
-    #expect(PanelKeyCommand.resolve(characters: "0", modifiers: .command) == nil)
-}
-
-@MainActor
-@Test("Editing shortcuts forward to the target when ribbon controls have focus")
-func panelEditingShortcutsForwardToTarget() throws {
-    let panel = KeyablePanel(
-        contentRect: .zero,
-        styleMask: [.nonactivatingPanel],
-        backing: .buffered,
-        defer: false)
-    var forwarded: [TargetEditCommand] = []
-    panel.onEditTarget = { forwarded.append($0) }
-    panel.onUndoVersion = { false }
-    let cases: [(String, NSEvent.ModifierFlags, UInt16)] = [
-        ("a", .command, 0), ("c", .command, 8), ("v", .command, 9),
-        ("x", .command, 7), ("z", .command, 6), ("z", [.command, .shift], 6),
-    ]
-    for (characters, modifiers, keyCode) in cases {
-        let event = try #require(NSEvent.keyEvent(
-            with: .keyDown,
-            location: .zero,
-            modifierFlags: modifiers,
-            timestamp: 0,
-            windowNumber: 0,
-            context: nil,
-            characters: characters,
-            charactersIgnoringModifiers: characters,
-            isARepeat: false,
-            keyCode: keyCode))
-        #expect(panel.performKeyEquivalent(with: event))
+    for digit in ["1", "2", "3", "4", "5"] {
+        for modifiers: NSEvent.ModifierFlags in [.command, .shift, .option, .control] {
+            #expect(PanelKeyCommand.resolve(characters: digit, modifiers: modifiers) == nil)
+        }
     }
-
-    #expect(forwarded == [.selectAll, .copy, .paste, .cut, .undo, .redo])
+    #expect(PanelKeyCommand.resolve(characters: "0", modifiers: []) == nil)
+    #expect(PanelKeyCommand.resolve(characters: "6", modifiers: []) == nil)
+    #expect(PanelKeyCommand.resolve(characters: "0", modifiers: .command) == nil)
+    #expect(PanelKeyCommand.resolve(characters: "6", modifiers: .command) == nil)
 }
 
 @Test("Tab and shift-Tab resolve to focus moves")
@@ -1198,18 +1453,6 @@ func panelKeyCommandsResolvePrimaryReturn() {
     #expect(!PanelKeyCommand.isPrimaryReturn(keyCode: 48, modifiers: []))
 }
 
-@Test("Target keystrokes preserve physical keys and modifiers")
-func targetKeystrokesPreserveKeysAndModifiers() {
-    let plain = TargetKeyStroke(keyCode: 51, modifiers: [])
-    #expect(plain.keyCode == 51)
-    #expect(plain.eventFlags.isEmpty)
-
-    let modified = TargetKeyStroke(keyCode: 0, modifiers: [.shift, .option])
-    #expect(modified.keyCode == 0)
-    #expect(modified.eventFlags.contains(.maskShift))
-    #expect(modified.eventFlags.contains(.maskAlternate))
-}
-
 // MARK: - Ribbon keyboard model
 
 @MainActor
@@ -1219,8 +1462,10 @@ func ribbonEscapeBacksOutOfTheRunFirst() {
     model.reset(hasSelection: true, charCount: 12)
     var cancelledRuns = 0
     var closes = 0
+    var declines = 0
     model.onCancelRun = { cancelledRuns += 1 }
     model.onCancel = { closes += 1 }
+    model.onDeclinePending = { declines += 1 }
 
     model.phase = .running
     model.escape()
@@ -1233,12 +1478,18 @@ func ribbonEscapeBacksOutOfTheRunFirst() {
     #expect(closes == 1)
 
     // A finished run is not an in-flight one: Esc leaves after it, as before.
-    for phase in [PanelModel.Phase.applied, .error, .confirm] {
+    for phase in [PanelModel.Phase.applied, .error] {
         model.phase = phase
         model.escape()
     }
     #expect(cancelledRuns == 1)
-    #expect(closes == 4)
+    #expect(closes == 3)
+    for phase in [PanelModel.Phase.scopeApproval, .confirm] {
+        model.phase = phase
+        model.escape()
+    }
+    #expect(declines == 2)
+    #expect(closes == 3)
 }
 
 @MainActor
@@ -1246,28 +1497,21 @@ func ribbonEscapeBacksOutOfTheRunFirst() {
 func ribbonFocusCycles() {
     let model = PanelModel()
     model.reset(hasSelection: true, charCount: 12)
-    #expect(model.focusedCell == .smartEdit)
-    #expect(model.focusableCells == [.oops, .snippets, .smartEdit])
-
-    model.moveFocus(.next)
-    #expect(model.focusedCell == .oops)
-
-    model.moveFocus(.previous)
-    #expect(model.focusedCell == .smartEdit)
-
-    model.showSmartEdit()
-    #expect(model.focusedCell == .action(0))
+    #expect(model.focusedCell == .none)
     #expect(model.focusableCells == [
-        .action(0), .action(1), .action(2), .action(3), .action(4),
+        .action(0), .action(1), .action(2), .action(3), .action(4), .target,
     ])
 
+    model.moveFocus(.next)
+    #expect(model.focusedCell == .action(0))
+
     model.moveFocus(.previous)
-    #expect(model.focusedCell == .action(4))
+    #expect(model.focusedCell == .target)
 
     model.selectCustomInstruction()
     #expect(model.focusedCell == .direction)
     #expect(model.focusableCells == [
-        .action(0), .action(1), .action(2), .action(3), .direction, .run,
+        .action(0), .action(1), .action(2), .action(3), .direction, .run, .target,
     ])
     model.moveFocus(.next)
     #expect(model.focusedCell == .run)
@@ -1278,17 +1522,16 @@ func ribbonFocusCycles() {
 func ribbonFocusIgnoresSelectionCapture() {
     let model = PanelModel()
     model.reset(hasSelection: false, charCount: 0)
-    #expect(model.focusableCells == [.oops, .snippets, .smartEdit])
+    #expect(model.focusableCells == [
+        .action(0), .action(1), .action(2), .action(3), .action(4),
+    ])
 
     model.moveFocus(.next)
-    #expect(model.focusedCell == .oops)
+    #expect(model.focusedCell == .action(0))
 
-    // Capture state does not alter the visible main-menu controls.
+    // Capturing hides the menu the same way, so the cell drops out too.
     model.reset(hasSelection: true, charCount: 8)
     model.capturing = true
-    #expect(model.focusableCells == [.oops, .snippets, .smartEdit])
-
-    model.showSmartEdit()
     #expect(model.focusableCells == [
         .action(0), .action(1), .action(2), .action(3), .action(4),
     ])
@@ -1297,31 +1540,6 @@ func ribbonFocusIgnoresSelectionCapture() {
     #expect(model.focusableCells == [
         .action(0), .action(1), .action(2), .action(3), .direction, .run,
     ])
-}
-
-@MainActor
-@Test("Numbered shortcuts follow the visible ribbon menu")
-func ribbonNumberedShortcutsFollowVisibleMenu() {
-    let model = PanelModel()
-    let snippet = TextSnippet(title: "Office", value: "246810")
-    model.snippets = [snippet]
-    var oopsRuns = 0
-    var pastedSnippet: TextSnippet?
-    model.onOops = { oopsRuns += 1 }
-    model.onSnippet = { pastedSnippet = $0 }
-
-    model.activateNumberedButton(at: 0)
-    #expect(oopsRuns == 1)
-
-    model.activateNumberedButton(at: 1)
-    #expect(model.snippetsExpanded)
-    model.activateNumberedButton(at: 0)
-    #expect(pastedSnippet == snippet)
-
-    model.reset(hasSelection: true, charCount: 12)
-    model.activateNumberedButton(at: 2)
-    #expect(model.smartEditExpanded)
-    #expect(model.focusedCell == .action(0))
 }
 
 @MainActor
@@ -1443,7 +1661,7 @@ func ribbonTargetShortcutWaitsForCapture() {
 }
 
 @MainActor
-@Test("A fresh session starts on Smart Edit in the main menu")
+@Test("A fresh session starts without focusing an action")
 func ribbonResetClearsFocus() {
     let model = PanelModel()
     model.focusedCell = .direction
@@ -1451,7 +1669,7 @@ func ribbonResetClearsFocus() {
 
     model.reset(hasSelection: true, charCount: 30)
 
-    #expect(model.focusedCell == .smartEdit)
+    #expect(model.focusedCell == .none)
     #expect(
         model.sessionSeq == before &+ 1,
         "the lane's hosting view outlives a session, so the bump clears stale focus")
@@ -1579,30 +1797,6 @@ func nonceAvoidsGuidanceCollision() {
     #expect(!"body".contains(nonce))
 }
 
-@Test("Oops converts English-layout keystrokes to Hebrew and selects Hebrew")
-func keyboardLayoutConversionToHebrew() {
-    let conversion = KeyboardLayoutConverter.conversion(of: "akuo")
-
-    #expect(conversion.text == "שלום")
-    #expect(conversion.language == .hebrew)
-}
-
-@Test("Oops converts Hebrew-layout keystrokes to English and selects English")
-func keyboardLayoutConversionToEnglish() {
-    let conversion = KeyboardLayoutConverter.conversion(of: "שלום")
-
-    #expect(conversion.text == "akuo")
-    #expect(conversion.language == .english)
-}
-
-@Test("Oops converts Shift-modified Hebrew-layout keystrokes to English")
-func keyboardLayoutConversionFromShiftedHebrew() {
-    let conversion = KeyboardLayoutConverter.conversion(of: "שׁ„וֹ״₪")
-
-    #expect(conversion.text == "ADU\"&")
-    #expect(conversion.language == .english)
-}
-
 @Test("The action strip exposes all four built-ins in shortcut order")
 func presetListShape() {
     #expect(PanelPreset.all == [.improve, .sharpen, .planFirst, .tighten])
@@ -1613,184 +1807,6 @@ func presetListShape() {
     #expect(PanelPreset.tighten.action == .tighten)
     #expect(PanelPreset.all.count == Set(PanelPreset.all.map(\.id)).count, "preset ids must be unique")
     #expect(PanelPreset.all.allSatisfy { !$0.action.isCustom }, "presets are named templates, never free-form")
-}
-
-@Test("Prompt YAML controls button order, display, visibility, and Markdown content")
-func promptStoreLoadsManifest() throws {
-    let fileManager = FileManager.default
-    let directory = fileManager.temporaryDirectory
-        .appendingPathComponent(UUID().uuidString, isDirectory: true)
-    try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-    defer { try? fileManager.removeItem(at: directory) }
-    try "Make this concise.".write(
-        to: directory.appendingPathComponent("concise.md"), atomically: true, encoding: .utf8)
-    try "Do not load this.".write(
-        to: directory.appendingPathComponent("hidden.md"), atomically: true, encoding: .utf8)
-    try "Fix grammar only.".write(
-        to: directory.appendingPathComponent("proofread.md"), atomically: true, encoding: .utf8)
-
-    let yaml = """
-    prompts:
-      - file: proofread.md
-        title: Proofread
-        symbol: text.badge.checkmark
-        progress: Proofreading
-        overide_model: gpt-5
-        overide_reasoning_effort: high
-        enabled: true
-      - file: hidden.md
-        title: Hidden
-        symbol: eye.slash
-        progress: Hiding
-        enabled: false
-      - file: concise.md
-        title: Concise
-        symbol: arrow.down.right.and.arrow.up.left
-        progress: Tightening
-        overide_model: ""
-        overide_reasoning_effort: ""
-        enabled: true
-    """
-
-    let presets = try PromptStore.load(yaml: yaml, from: directory)
-
-    #expect(presets.map(\.id) == ["proofread", "concise"])
-    #expect(presets.map(\.title) == ["Proofread", "Concise"])
-    #expect(presets.map(\.symbol) == [
-        "text.badge.checkmark", "arrow.down.right.and.arrow.up.left",
-    ])
-    #expect(presets.map(\.progressLabel) == ["Proofreading", "Tightening"])
-    #expect(presets.map(\.requestOverrides) == [
-        LLMRequestOverrides(model: "gpt-5", reasoningEffort: "high"), nil,
-    ])
-    #expect(presets.map(\.action) == [
-        .prompt(instruction: "Fix grammar only.", progressLabel: "Proofreading"),
-        .prompt(instruction: "Make this concise.", progressLabel: "Tightening"),
-    ])
-}
-
-@Test("Prompt folder creation does not parse a manifest that needs repair")
-func promptStoreCreatesFolderWithoutParsing() throws {
-    let fileManager = FileManager.default
-    let root = fileManager.temporaryDirectory
-        .appendingPathComponent(UUID().uuidString, isDirectory: true)
-    let defaults = root.appendingPathComponent("defaults", isDirectory: true)
-    let destination = root.appendingPathComponent("prompts", isDirectory: true)
-    try fileManager.createDirectory(at: defaults, withIntermediateDirectories: true)
-    defer { try? fileManager.removeItem(at: root) }
-    try "not valid yaml".write(
-        to: defaults.appendingPathComponent("prompts.yaml"), atomically: true, encoding: .utf8)
-
-    let created = try PromptStore.ensureCreated(
-        at: destination, defaultsURL: defaults, fileManager: fileManager)
-
-    #expect(created == destination)
-    #expect(fileManager.fileExists(atPath: destination.appendingPathComponent("prompts.yaml").path))
-}
-
-@Test("Smart Edit request overrides fall back field by field")
-func smartEditRequestOverridesResolveDefaults() {
-    let defaults = CopilotCLIProvider.requestConfig(
-        defaultModel: "default-model",
-        defaultReasoningEffort: "medium",
-        overrides: nil)
-    #expect(defaults.model == "default-model")
-    #expect(defaults.reasoningEffort == "medium")
-
-    let modelOnly = CopilotCLIProvider.requestConfig(
-        defaultModel: "default-model",
-        defaultReasoningEffort: "medium",
-        overrides: LLMRequestOverrides(model: " custom-model ", reasoningEffort: ""))
-    #expect(modelOnly.model == "custom-model")
-    #expect(modelOnly.reasoningEffort == "medium")
-
-    let effortOnly = CopilotCLIProvider.requestConfig(
-        defaultModel: "default-model",
-        defaultReasoningEffort: "medium",
-        overrides: LLMRequestOverrides(model: nil, reasoningEffort: " high "))
-    #expect(effortOnly.model == "default-model")
-    #expect(effortOnly.reasoningEffort == "high")
-}
-
-@Test("Smart Edit warmup keeps unique resolved configurations within the sidecar limit")
-func smartEditWarmConfigs() {
-    let configs = CopilotCLIProvider.warmConfigs(
-        executable: "/usr/local/bin/copilot",
-        defaultModel: "default-model",
-        defaultReasoningEffort: "medium",
-        overrides: [
-            LLMRequestOverrides(model: "default-model", reasoningEffort: "medium")!,
-            LLMRequestOverrides(model: "fast-model", reasoningEffort: "none")!,
-            LLMRequestOverrides(model: "fast-model", reasoningEffort: "none")!,
-            LLMRequestOverrides(model: "other-model", reasoningEffort: nil)!,
-            LLMRequestOverrides(model: "fourth-model", reasoningEffort: "low")!,
-        ])
-
-    #expect(configs == [
-        CopilotACPConfig(
-            executable: "/usr/local/bin/copilot",
-            model: "default-model",
-            reasoningEffort: "medium"),
-        CopilotACPConfig(
-            executable: "/usr/local/bin/copilot",
-            model: "fast-model",
-            reasoningEffort: "none"),
-        CopilotACPConfig(
-            executable: "/usr/local/bin/copilot",
-            model: "other-model",
-            reasoningEffort: "medium"),
-    ])
-}
-
-@MainActor
-@Test("Panel routes dynamically loaded Smart Edit buttons in manifest order")
-func dynamicPromptButtonsRouteLoadedActions() {
-    let first = PanelPreset(
-        id: "first", title: "First",
-        action: .prompt(instruction: "First prompt", progressLabel: "First pass"),
-        symbol: "1.circle", progressLabel: "First pass",
-        requestOverrides: LLMRequestOverrides(model: "fast-model", reasoningEffort: "low"))
-    let second = PanelPreset(
-        id: "second", title: "Second",
-        action: .prompt(instruction: "Second prompt", progressLabel: "Second pass"),
-        symbol: "2.circle", progressLabel: "Second pass")
-    let model = PanelModel()
-    model.setPresets([second, first])
-    var calls: [EditAction] = []
-    model.onPerform = { action, _ in calls.append(action) }
-
-    #expect(model.actionDisplayOrder == [0, 1, 2])
-    #expect(model.actionTitle(at: 0) == "Second")
-    #expect(model.actionSymbol(at: 1) == "1.circle")
-    #expect(model.actionProgressLabel(at: 1) == "First pass")
-
-    model.activateAction(at: 1)
-    #expect(calls == [.prompt(instruction: "First prompt", progressLabel: "First pass")])
-    #expect(model.requestOverrides == LLMRequestOverrides(model: "fast-model", reasoningEffort: "low"))
-    #expect(model.dynamicCustomActionIndex == 2)
-
-    model.selectCustomInstruction()
-    #expect(model.requestOverrides == nil)
-}
-
-@Test("Smart Edit width grows with loaded prompt buttons")
-func smartEditWidthTracksPromptCatalog() {
-    let one = [PanelPreset.improve]
-    let three = [PanelPreset.improve, .sharpen, .tighten]
-
-    #expect(RibbonPlacement.smartEditWidth(presets: three, customExpanded: false)
-        > RibbonPlacement.smartEditWidth(presets: one, customExpanded: false))
-    #expect(RibbonPlacement.smartEditWidth(presets: one, customExpanded: true)
-        > RibbonPlacement.smartEditWidth(presets: one, customExpanded: false))
-}
-
-@Test("Smart Edit action width matches its rendered button chrome")
-func smartEditActionWidthMatchesButton() {
-    let font = NSFont.systemFont(ofSize: 12, weight: .semibold)
-    let longestText = ceil(("Improving" as NSString).size(withAttributes: [.font: font]).width)
-
-    #expect(RibbonPlacement.smartEditActionWidth(
-        title: "Improve", progress: "Improving") == longestText + 44)
 }
 
 @MainActor
@@ -1829,26 +1845,15 @@ func onlyCustomPrefersExpandedRibbon() {
 }
 
 @MainActor
-@Test("Every action exposes the matching Command-number hover label")
+@Test("Every action exposes the matching number shortcut")
 func actionShortcutLabels() {
     let model = PanelModel()
 
     #expect(PanelModel.actionIndices.map { model.actionShortcut(at: $0) } == [
-        "⌘1", "⌘2", "⌘3", "⌘4", "⌘5",
+        "1", "2", "3", "4", "5",
     ])
     #expect(model.actionShortcut(at: -1) == nil)
     #expect(model.actionShortcut(at: 5) == nil)
-}
-
-@MainActor
-@Test("Every numbered ribbon button exposes a positional hover label")
-func numberedButtonShortcutLabels() {
-    let model = PanelModel()
-    #expect((0..<9).map { model.numberedButtonShortcut(at: $0) } == [
-        "⌘1", "⌘2", "⌘3", "⌘4", "⌘5", "⌘6", "⌘7", "⌘8", "⌘9",
-    ])
-    #expect(model.numberedButtonShortcut(at: -1) == nil)
-    #expect(model.numberedButtonShortcut(at: 9) == nil)
 }
 
 @MainActor
@@ -1908,6 +1913,7 @@ func versionUndoAvailability() {
 
     model.versionCount = 2
     model.currentIndex = 1
+    model.undoAvailable = true
     #expect(model.undoLastVersion())
     #expect(calls == 1)
 
@@ -2044,17 +2050,17 @@ func selectedPresetIgnoresHiddenDraft() {
     #expect(model.hasCustomInstruction)
 }
 
-@Test("Restoring the default action clears and hides Custom")
+@Test("Restoring the default action hides Custom but preserves its draft")
 @MainActor
-func restoreDefaultActionClearsCustom() {
+func restoreDefaultActionPreservesCustom() {
     let model = PanelModel()
     model.selectCustomInstruction()
     model.instruction = "make it formal"
 
-    model.restoreDefaultAction()
+    model.restoreButtonsAfterApply()
 
     #expect(model.actionChoice == .preset(.improve))
-    #expect(model.instruction.isEmpty)
+    #expect(model.instruction == "make it formal")
     #expect(!model.isCustomInstructionSelected)
     #expect(model.focusedCell == .none)
 }
@@ -2071,8 +2077,7 @@ func resetRestoresDefaultAction() {
     #expect(model.actionChoice == .preset(.improve))
     #expect(model.resolvedActionTitle == "Improve")
     #expect(!model.isCustomInstructionSelected)
-    #expect(!model.smartEditExpanded)
-    #expect(model.focusedCell == .smartEdit)
+    #expect(model.focusedCell == .none)
 }
 
 // MARK: - Ribbon placement
@@ -2081,69 +2086,6 @@ func resetRestoresDefaultAction() {
 /// top and a 60pt Dock at the bottom — the ordinary windowed case.
 private let ribbonScreen = CGRect(x: 0, y: 0, width: 1440, height: 900)
 private let ribbonVisible = CGRect(x: 0, y: 60, width: 1440, height: 815)
-
-@Test("Placement centers below the captured pointer")
-func placementFollowsCapturedPointer() {
-    let pointer = CGPoint(x: 720, y: 500)
-    let resolved = RibbonPlacement.resolve(
-        height: 56,
-        in: .init(
-            screenFrame: ribbonScreen,
-            visibleFrame: ribbonVisible,
-            pointerLocation: pointer,
-            preferredWidth: RibbonPlacement.compactWidth,
-            minimumContentWidth: RibbonPlacement.compactWidth))
-
-    #expect(resolved.anchor == .belowPointer)
-    #expect(resolved.frame.midX == pointer.x)
-    #expect(resolved.frame.maxY == pointer.y - RibbonPlacement.pointerClearance)
-}
-
-@Test("Placement opens above a pointer near the display floor")
-func placementOpensAboveLowPointer() {
-    let pointer = CGPoint(x: 720, y: ribbonVisible.minY + 20)
-    let resolved = RibbonPlacement.resolve(
-        height: 56,
-        in: .init(
-            screenFrame: ribbonScreen,
-            visibleFrame: ribbonVisible,
-            pointerLocation: pointer,
-            preferredWidth: RibbonPlacement.compactWidth,
-            minimumContentWidth: RibbonPlacement.compactWidth))
-
-    #expect(resolved.anchor == .abovePointer)
-    #expect(resolved.frame.minY == pointer.y + RibbonPlacement.pointerClearance)
-}
-
-@Test("Pointer-relative placement clamps at display edges")
-func placementNearPointerClampsAtScreenEdges() {
-    let resolved = RibbonPlacement.resolve(
-        height: 56,
-        in: .init(
-            screenFrame: ribbonScreen,
-            visibleFrame: ribbonVisible,
-            pointerLocation: CGPoint(x: ribbonScreen.maxX - 5, y: 500),
-            preferredWidth: RibbonPlacement.compactWidth,
-            minimumContentWidth: RibbonPlacement.compactWidth))
-
-    #expect(resolved.frame.maxX == ribbonScreen.maxX)
-}
-
-@MainActor
-@Test("The pointer display wins over selection and host displays")
-func targetScreenFollowsPointerAcrossDisplays() {
-    let displays = [
-        CGRect(x: 0, y: 0, width: 1440, height: 900),
-        CGRect(x: -1920, y: 0, width: 1920, height: 1080),
-    ]
-    let index = RibbonWindow.targetScreenIndex(
-        pointerLocation: CGPoint(x: -800, y: 500),
-        selectionRect: CGRect(x: 200, y: 300, width: 400, height: 20),
-        hostWindowFrame: CGRect(x: 100, y: 100, width: 1000, height: 700),
-        screenFrames: displays)
-
-    #expect(index == 1)
-}
 
 @Test("Placement honors standard and expanded preferred widths")
 func placementHonorsPreferredWidth() {
@@ -2763,6 +2705,16 @@ func placementKeepsItsPlaceWhenNeitherSideFits() {
     #expect(resolved.frame.maxY == ribbonVisible.maxY)
 }
 
+@Test("The cramped-end fallback accounts for the target row's measured height")
+func placementDoesNotClaimAGapShorterThanItsContent() {
+    let resolved = RibbonPlacement.resolve(
+        height: 80,
+        in: .init(
+            screenFrame: ribbonScreen, visibleFrame: ribbonVisible,
+            selectionRect: CGRect(x: 0, y: 130, width: 1440, height: 675)))
+    #expect(resolved.anchor == .screen)
+}
+
 @Test("A selection scrolled off the host leaves the lane where it belongs")
 func placementIgnoresAnOffHostSelection() {
     // Behind the Dock, below everything the lane is allowed to occupy.
@@ -3007,317 +2959,152 @@ private func startedSession(
     capturedText: String? = "original", targetPid: pid_t = sessionHostPid
 ) -> EditSession {
     var session = EditSession(ownPid: sessionOwnPid)
-    session.begin(capturedText: capturedText, targetPid: targetPid)
+    let target = EditSession.TargetID(pid: targetPid, elementIdentifier: 10)
+    if let capturedText {
+        _ = session.begin(with: .selection(.init(
+            text: capturedText, target: target,
+            range: capturedText.isEmpty ? nil : .init(location: 0, length: capturedText.utf16.count))))
+    } else {
+        _ = session.begin(with: .noSelection(target))
+    }
     return session
 }
 
-/// Drive a resolution and return every step it took, so the *order* of the
-/// probes is asserted rather than just the answer they arrive at.
-private func sessionSteps(
-    _ session: inout EditSession, _ observations: [EditSession.Observation]
-) -> [EditSession.Step] {
-    observations.map { session.next(after: $0) }
+private func sessionRequest(_ session: inout EditSession) throws -> EditSession.GenerationRequest {
+    guard case .send(let request) = session.requestGeneration() else {
+        throw SessionTestError.unexpectedDecision
+    }
+    return request
 }
 
-private func liveRun(
-    _ text: String, adopted: Bool = true, committedTarget: Bool = false
-) -> EditSession.Step {
-    .run(.init(
-        text: text, strategy: .liveSelection,
-        adoptedSelection: adopted, committedNewTarget: committedTarget))
+private enum SessionTestError: Error { case unexpectedDecision }
+
+private func applySessionResult(_ output: String, to session: inout EditSession) throws {
+    let request = try sessionRequest(&session)
+    guard case .apply(let plan) = session.consider(
+        .init(output: output, for: request), replacementConfirmationRequired: false),
+        case .selection(let target, .some(let range)) = request.baseline.target
+    else { throw SessionTestError.unexpectedDecision }
+    let finished = session.finishApply(plan, outcome: .applied(.init(
+        text: output, target: .selection(
+            target: target, range: .init(location: range.location, length: output.utf16.count)))))
+    #expect(finished)
 }
 
-@Test("The frontmost app is checked ahead of both scope branches")
-func sessionChecksFrontmostBeforeScope() {
+@Test("A captured selection can generate but document scope needs consent")
+func sessionScopeControlsGeneration() throws {
     var selection = startedSession()
-    #expect(selection.next(after: .start(scope: .selection, hasSelection: true)) == .probeFrontmost)
-
+    #expect(try sessionRequest(&selection).text == "original")
     var document = startedSession(capturedText: nil)
-    #expect(document.next(after: .start(scope: .document, hasSelection: false)) == .probeFrontmost)
+    #expect(document.requestGeneration() == .requestDocumentApproval)
 }
 
-@Test("Only a live selection re-targets to the app the user moved to")
-func sessionRetargetsOnlyOnALiveSelection() {
-    var adopted = startedSession()
-    #expect(sessionSteps(&adopted, [
-        .start(scope: .selection, hasSelection: true),
-        .frontmost(pid: sessionOtherPid),
-        .newTarget(text: "over here", pid: sessionOtherPid),
-    ]) == [.probeFrontmost, .captureNewTarget, liveRun("over here", committedTarget: true)])
-
-    // Nothing selected in the new app is no evidence about what to edit, so the
-    // session stays on the text it opened against.
-    var declined = startedSession()
-    #expect(sessionSteps(&declined, [
-        .start(scope: .selection, hasSelection: true),
-        .frontmost(pid: sessionOtherPid),
-        .newTarget(text: nil, pid: sessionOtherPid),
-    ]) == [.probeFrontmost, .captureNewTarget, liveRun("original", adopted: false)])
-
-    var empty = startedSession()
-    #expect(sessionSteps(&empty, [
-        .start(scope: .selection, hasSelection: true),
-        .frontmost(pid: sessionOtherPid),
-        .newTarget(text: "", pid: sessionOtherPid),
-    ]).last == liveRun("original", adopted: false))
-}
-
-@Test("Re-targeting clears the history, so no undo can reach the new app")
-func sessionRetargetClearsHistory() {
+@Test("Re-targeting clears history and uses the new target evidence")
+func sessionRetargetClearsHistory() throws {
     var session = startedSession()
-    session.recordApplied(output: "v1", baseline: "original")
-    session.recordApplied(output: "v2", baseline: "v1")
+    try applySessionResult("v1", to: &session)
+    try applySessionResult("v2", to: &session)
     #expect(session.versionCount == 3)
-
-    let steps = sessionSteps(&session, [
-        .start(scope: .selection, hasSelection: true),
-        .frontmost(pid: sessionOtherPid),
-        .newTarget(text: "elsewhere", pid: sessionOtherPid),
-    ])
-
-    #expect(steps.last == liveRun("elsewhere", committedTarget: true))
-    #expect(session.versions == ["elsewhere"], "history describes edits made in the old app")
-    // The danger this guards: ⌘Z posted into an app Mancia never pasted into
-    // would undo an edit of the user's own.
-    guard case .run(let run)? = steps.last else { return #expect(Bool(false)) }
-    #expect(run.strategy != .undoThenPaste)
+    let target = EditSession.TargetID(pid: sessionOtherPid, elementIdentifier: 12)
+    #expect(session.adopt(.selection(.init(
+        text: "elsewhere", target: target, range: .init(location: 5, length: 9)))) == nil)
+    #expect(session.versionCount == 0)
+    let request = try sessionRequest(&session)
+    #expect(request.text == "elsewhere")
+    #expect(request.baseline.target == .selection(target: target, range: .init(location: 5, length: 9)))
 }
 
 @Test("Mancia's own pid never re-targets the session onto itself")
-func sessionNeverRetargetsOntoItself() {
+func sessionNeverRetargetsOntoItself() throws {
     var session = startedSession()
-    // ⌘, and the permission alert both make Mancia frontmost mid-session.
-    #expect(sessionSteps(&session, [
-        .start(scope: .selection, hasSelection: true),
-        .frontmost(pid: sessionOwnPid),
-    ]) == [.probeFrontmost, liveRun("original", adopted: false)])
-
-    // The session's own target is likewise not a move.
-    var same = startedSession()
-    #expect(sessionSteps(&same, [
-        .start(scope: .selection, hasSelection: true),
-        .frontmost(pid: sessionHostPid),
-    ]).last == liveRun("original", adopted: false))
+    #expect(session.adopt(.noSelection(.init(
+        pid: sessionOwnPid, elementIdentifier: 10))) == .invalidTarget)
+    #expect(try sessionRequest(&session).text == "original")
 }
 
-@Test("Document scope with nothing selected probes for a selection before ⌘A")
-func sessionDocumentScopeProbesForSelectionFirst() {
-    var promoted = startedSession(capturedText: nil)
-    #expect(sessionSteps(&promoted, [
-        .start(scope: .document, hasSelection: false),
-        .frontmost(pid: sessionHostPid),
-        .freshSelection("just selected"),
-    ]) == [.probeFrontmost, .probeFreshSelection, liveRun("just selected")])
-    #expect(promoted.versions == ["just selected"])
-
-    // Still nothing selected: fall back to the whole document.
-    var fallback = startedSession(capturedText: nil)
-    #expect(sessionSteps(&fallback, [
-        .start(scope: .document, hasSelection: false),
-        .frontmost(pid: sessionHostPid),
-        .freshSelection(nil),
-    ]) == [.probeFrontmost, .probeFreshSelection, .captureDocument])
-
-    // A session that already knows it has a selection goes straight to ⌘A.
-    var direct = startedSession()
-    #expect(sessionSteps(&direct, [
-        .start(scope: .document, hasSelection: true),
-        .frontmost(pid: sessionHostPid),
-    ]) == [.probeFrontmost, .captureDocument])
-}
-
-@Test("A manual edit between document cycles becomes the new baseline")
-func sessionDocumentScopeAdoptsManualEdits() {
+@Test("Document approval captures a fresh baseline and rejects a changed field")
+func sessionDocumentScopeAdoptsManualEdits() throws {
     var session = startedSession()
-    session.recordApplied(output: "generated", baseline: "original")
-    #expect(session.versions == ["original", "generated"])
-
-    var edited = session
-    #expect(sessionSteps(&edited, [
-        .start(scope: .document, hasSelection: true),
-        .frontmost(pid: sessionHostPid),
-        .document("the user typed over it"),
-    ]).last == .run(.init(
-        text: "the user typed over it", strategy: .entireDocument,
-        adoptedSelection: false, committedNewTarget: false)))
-    #expect(edited.versions == ["the user typed over it"], "a manual edit restarts the history")
-
-    // Unchanged text leaves the history alone.
-    var untouched = session
-    #expect(sessionSteps(&untouched, [
-        .start(scope: .document, hasSelection: true),
-        .frontmost(pid: sessionHostPid),
-        .document("generated"),
-    ]).last?.isRun == true)
-    #expect(untouched.versions == ["original", "generated"])
+    session.setScope(.document)
+    #expect(session.requestGeneration() == .requestDocumentApproval)
+    let target = EditSession.TargetID(pid: sessionHostPid, elementIdentifier: 10)
+    #expect(session.approveDocumentGeneration() == .captureDocument(target))
+    var stale = session
+    #expect(stale.acceptDocumentCapture(.captured(
+        text: "another field", target: .init(pid: sessionHostPid, elementIdentifier: 20)))
+        == .failure(.targetChanged))
+    guard case .send(let request) = session.acceptDocumentCapture(.captured(
+        text: "the user typed over it", target: target))
+    else { throw SessionTestError.unexpectedDecision }
+    #expect(request.text == "the user typed over it")
 }
 
-@Test("A fresh selection is adopted even when identical to the last result")
-func sessionAdoptsIdenticalFreshSelection() {
+@Test("Identical selection evidence keeps history but a moved range resets it")
+func sessionAdoptsIdenticalFreshSelection() throws {
     var session = startedSession()
-    session.recordApplied(output: "same words", baseline: "original")
-
-    let steps = sessionSteps(&session, [
-        .start(scope: .selection, hasSelection: true),
-        .frontmost(pid: sessionHostPid),
-        .freshSelection("same words"),
-    ])
-
-    // Adoption is unconditional and ahead of the baseline check: the same text
-    // can have been re-selected somewhere else, and the Target chip has to
-    // describe the span this run will actually send.
-    #expect(steps.last == liveRun("same words"))
-    #expect(session.versions == ["original", "same words"], "identical text is not a new baseline")
-
-    // Genuinely different text does restart the baseline.
-    var moved = startedSession()
-    moved.recordApplied(output: "same words", baseline: "original")
-    #expect(sessionSteps(&moved, [
-        .start(scope: .selection, hasSelection: true),
-        .frontmost(pid: sessionHostPid),
-        .freshSelection("a different sentence"),
-    ]).last == liveRun("a different sentence"))
-    #expect(moved.versions == ["a different sentence"])
-}
-
-@Test("The first selection cycle pastes over the live selection, later ones undo first")
-func sessionSelectionStrategyFollowsTheCycle() {
-    var first = startedSession()
-    #expect(sessionSteps(&first, [
-        .start(scope: .selection, hasSelection: true),
-        .frontmost(pid: sessionHostPid),
-    ]).last == liveRun("original", adopted: false), "the original selection is still live")
-
-    var later = startedSession()
-    later.recordApplied(output: "v1", baseline: "original")
-    #expect(sessionSteps(&later, [
-        .start(scope: .selection, hasSelection: true),
-        .frontmost(pid: sessionHostPid),
-        .freshSelection(nil),
-    ]) == [.probeFrontmost, .probeFreshSelection, .run(.init(
-        text: "v1", strategy: .undoThenPaste,
-        adoptedSelection: false, committedNewTarget: false))],
-    "exactly one paste stays outstanding")
+    try applySessionResult("same words", to: &session)
+    let target = EditSession.TargetID(pid: sessionHostPid, elementIdentifier: 10)
+    #expect(session.adopt(.selection(.init(
+        text: "same words", target: target, range: .init(location: 0, length: 10)))) == nil)
+    #expect(session.versionTexts == ["original", "same words"])
+    #expect(session.adopt(.selection(.init(
+        text: "same words", target: target, range: .init(location: 40, length: 10)))) == nil)
+    #expect(session.versionCount == 0)
 }
 
 @Test("Recording an applied result drops any forward history")
-func sessionRecordAppliedTruncatesForwardHistory() {
+func sessionRecordAppliedTruncatesForwardHistory() throws {
     var session = startedSession()
-    session.recordApplied(output: "v1", baseline: "original")
-    session.recordApplied(output: "v2", baseline: "v1")
-    #expect(session.versions == ["original", "v1", "v2"])
+    try applySessionResult("v1", to: &session)
+    try applySessionResult("v2", to: &session)
+    #expect(session.versionTexts == ["original", "v1", "v2"])
+    let navigation = session.navigation(to: 1)
+    let plan = try #require(navigation)
+    let finished = session.finishNavigation(plan, outcome: .applied(.init(
+        text: "v1", target: .selection(
+            target: plan.current.target, range: .init(location: 0, length: 2)))))
+    #expect(finished)
+    try applySessionResult("v3", to: &session)
+    #expect(session.versionTexts == ["original", "v1", "v3"])
     #expect(session.currentIndex == 2)
-
-    _ = session.navigate(to: 1, scope: .selection)
-    session.recordApplied(output: "v3", baseline: "v1")
-    #expect(session.versions == ["original", "v1", "v3"])
-    #expect(session.currentIndex == 2)
-
-    // A first result seeds the original from the baseline it replaced.
-    var seeded = startedSession()
-    seeded.recordApplied(output: "only", baseline: "the original text")
-    #expect(seeded.versions == ["the original text", "only"])
 }
 
-@Test("Navigation strategy follows the scope, including back to index 0")
-func sessionNavigationStrategyFollowsScope() {
+@Test("Navigation needs a valid version and does not commit on failure")
+func sessionNavigationRequiresVerifiedOutcome() throws {
     var session = startedSession()
-    session.recordApplied(output: "v1", baseline: "original")
-    session.recordApplied(output: "v2", baseline: "v1")
-
-    // Selection scope always undoes first, index 0 included, so exactly one
-    // paste stays outstanding.
-    #expect(session.navigate(to: 0, scope: .selection)?.strategy == .undoThenPaste)
-    #expect(session.currentIndex == 0)
-    #expect(session.navigate(to: 2, scope: .document)?.strategy == .entireDocument)
-    #expect(session.navigate(to: 1, scope: .selection)?.text == "v1")
-
-    // Nowhere to go.
-    #expect(session.navigate(to: 1, scope: .selection) == nil, "already there")
-    #expect(session.navigate(to: -1, scope: .selection) == nil)
-    #expect(session.navigate(to: 3, scope: .selection) == nil)
-    #expect(session.currentIndex == 1, "a refused move leaves the position alone")
+    try applySessionResult("v1", to: &session)
+    #expect(session.navigation(to: 1) == nil)
+    #expect(session.navigation(to: -1) == nil)
+    #expect(session.navigation(to: 2) == nil)
+    let navigation = session.navigation(to: 0)
+    let plan = try #require(navigation)
+    #expect(session.currentIndex == 1)
+    let finished = session.finishNavigation(plan, outcome: .failure(.operationFailed))
+    #expect(finished)
+    #expect(session.currentIndex == 1)
 }
 
 @Test("Nothing to edit aborts rather than sending empty text")
 func sessionAbortsWithNothingToEdit() {
     var noCapture = startedSession(capturedText: nil)
-    #expect(sessionSteps(&noCapture, [
-        .start(scope: .selection, hasSelection: true),
-        .frontmost(pid: sessionHostPid),
-    ]).last == .abort)
-
+    noCapture.setScope(.selection)
+    #expect(noCapture.requestGeneration() == .failure(.noSelection))
     var emptyCapture = startedSession(capturedText: "")
-    #expect(sessionSteps(&emptyCapture, [
-        .start(scope: .selection, hasSelection: true),
-        .frontmost(pid: sessionHostPid),
-    ]).last == .abort)
-
-    for empty: String? in [nil, ""] {
-        var document = startedSession()
-        #expect(sessionSteps(&document, [
-            .start(scope: .document, hasSelection: true),
-            .frontmost(pid: sessionHostPid),
-            .document(empty),
-        ]).last == .abort)
-    }
+    #expect(emptyCapture.requestGeneration() == .failure(.emptyInput))
 }
 
-@Test("Every resolution reaches a run or an abort, whatever the target reports")
-func sessionResolutionAlwaysTerminates() {
-    let answers: [String?] = [nil, "", "text"]
-    let pids: [pid_t?] = [nil, sessionHostPid, sessionOtherPid, sessionOwnPid]
-
-    for scope in [EditSession.Scope.selection, .document] {
-        for hasSelection in [true, false] {
-            for captured in answers {
-                for frontmost in pids {
-                    for newTarget in answers {
-                        for fresh in answers {
-                            for document in answers {
-                                var session = startedSession(capturedText: captured)
-                                session.recordApplied(output: "v1", baseline: "seed")
-                                var observation = EditSession.Observation
-                                    .start(scope: scope, hasSelection: hasSelection)
-                                var taken = 0
-                                var finished = false
-                                while taken < 8, !finished {
-                                    taken += 1
-                                    switch session.next(after: observation) {
-                                    case .probeFrontmost:
-                                        observation = .frontmost(pid: frontmost)
-                                    case .captureNewTarget:
-                                        observation = .newTarget(text: newTarget, pid: sessionOtherPid)
-                                    case .probeFreshSelection:
-                                        observation = .freshSelection(fresh)
-                                    case .captureDocument:
-                                        observation = .document(document)
-                                    case .run, .abort:
-                                        finished = true
-                                    }
-                                }
-                                #expect(finished, """
-                                    never settled — scope \(scope), hasSelection \(hasSelection), \
-                                    captured \(String(describing: captured)), \
-                                    frontmost \(String(describing: frontmost))
-                                    """)
-                                // The longest legitimate path: probe the
-                                // frontmost app, capture a new target that
-                                // turns out to hold no selection, probe for a
-                                // fresh selection, fall back to ⌘A, then run.
-                                #expect(taken <= 5, "a cycle should never need more than five steps")
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-private extension EditSession.Step {
-    var isRun: Bool {
-        if case .run = self { return true }
-        return false
-    }
+@Test("An in-flight request rejects another run and ignores late output after cancellation")
+func sessionRejectsOverlappingGeneration() throws {
+    var session = startedSession()
+    let first = try sessionRequest(&session)
+    #expect(session.requestGeneration() == .failure(.busy))
+    _ = session.cancel(at: .generation)
+    let second = try sessionRequest(&session)
+    #expect(first != second)
+    #expect(session.consider(.init(output: "late", for: first),
+        replacementConfirmationRequired: false) == .failure(.staleResult))
+    #expect(session.stage == .generating)
+    guard case .apply = session.consider(.init(output: "current", for: second),
+        replacementConfirmationRequired: false)
+    else { throw SessionTestError.unexpectedDecision }
 }

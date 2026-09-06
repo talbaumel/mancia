@@ -3,42 +3,16 @@
 > **Historical design document.** This is the original v0.1 design spec, kept
 > for context. The implemented behavior has since evolved; see
 > [ARCHITECTURE.md](ARCHITECTURE.md) and the [README](../README.md) for current
-> behavior. Notably:
+> behavior. The sections below are not the current implementation contract.
 >
-> - **The floating panel is gone.** The edit session now runs in the
->   **command ribbon**: a lane that opens beside and vertically centered on
->   the invocation pointer. Without a pointer on the target display, it sits
->   against the selected text — just under it, or just over it when the
->   selection is too near the foot of the host — and otherwise falls back to
->   one predictable place (flush under the menu bar, or under the frontmost
->   window's title bar when the menu bar is not reserving a strip). Its cells
->   are Target, Action, Direction and Run, on one row. The bullets that follow
->   describe the panel that preceded it; the behavior they record carried over
->   to the lane, the placement and the ~360 pt command row did not.
-> - The panel was a single command row (~360 pt wide): a free-form
->   instruction field whose trailing controls are a **preset dropdown**
->   (`PanelPreset`) and an accent **run** button. Return and the run button take
->   the same path — an empty field means **Improve** (a proofread-and-rewrite
->   blend), a typed one runs that instruction. There is no separate hero button.
-> - The dropdown runs a named preset's specialized template; anything typed in
->   the field rides along as *additional guidance* for that preset rather than
->   replacing it (`PromptBuilder.build(action:text:note:)`). Today the list holds
->   Improve alone. The Rewrite / Summarize / Proofread templates still exist and
->   remain reachable through the debug CLI (`--complete`).
-> - There is no Translate or Reply action, and no "Entire document" preview: the
->   scope caption still lets you switch between the selection and the whole
->   document, but there is no separate scope menu screen.
-> - Edits **apply immediately** (no preview-then-Apply step). After an edit the
->   surface keeps an iteration history and shows `←` / `→` version navigation so
->   you can move between the original and each generated version.
-> - After applying, the surface either flashes "Improved" and auto-closes or stays
->   open with the version strip, per the **post-apply behavior** setting. The
->   auto-close beat is abandoned by any sign the user is still working — a
->   keypress, or the ribbon losing key because they clicked back into the host
->   app to select the next span.
-> - The Copilot provider now prefers a warmed, single-use ACP session
->   (`copilot --acp --stdio`) for lower latency; the original one-shot
->   `copilot -p` invocation remains the fallback path.
+> Today the ribbon keeps Improve, Sharpen, Plan first, Tighten, and Custom in
+> a stable order, with a visible target and a multiline Custom editor.
+> Whole-document access requires approval before capture and generation.
+> Replacement has a separate, configurable confirmation with an original/result
+> comparison. Applying and navigating versions require matching Accessibility
+> evidence; unsafe replacements remain available to copy. Clipboard restoration
+> respects newer user copies. See the architecture notes for these rules and
+> the current ACP-first provider lifecycle.
 
 A macOS menu bar app providing system-wide, selection-based AI text editing.
 Press a global hotkey in **any** app, and a command ribbon appears at the top of
@@ -99,7 +73,7 @@ Mancia/
 ## Dependencies (SPM)
 
 - `sindresorhus/KeyboardShortcuts` (MIT) — configurable global hotkey with a
-  recorder control for the settings UI. Default shortcut: **⌥⌘A**.
+  recorder control for the settings UI. Default shortcut: **⌃⌥⌘E**.
   No other third-party dependencies.
 
 ## Core flow
@@ -112,36 +86,44 @@ Mancia/
    - Poll `NSPasteboard.general.changeCount` every 30 ms, up to 600 ms.
    - If changed → captured selection string. If not → no selection.
    - Restore the snapshot to the pasteboard afterward.
-3. **The ribbon opens beside the invocation pointer**, resolved by
-  `RibbonPlacement`, just below the captured mouse position or just above it
-  when there is no room beneath. Without a pointer on the target display, it opens just under the
-  selected text, or just over it when the selection sits too near the foot of
-  the host to fit beneath. With neither usable pointer nor selection
-  rectangle, it falls back to one predictable place: flush under the menu bar
-  when the menu bar reserves a strip, otherwise under the frontmost window's
-  title bar. It is a
+3. **The ribbon opens against the selection**, resolved by
+   `RibbonPlacement`: centered on the selected span and as wide as it, just
+   under the selected text, or just over it when the selection sits too near
+   the foot of the display to fit beneath. The window around the text does not
+   move it. With no selection rectangle to work from — a bare caret, a host
+   that cannot report bounds, or a selection with nowhere beside it — it falls
+   back to one predictable place: flush under the menu bar when the menu bar
+   reserves a strip, otherwise under the frontmost window's title bar. It is a
    `KeyablePanel` with `.nonactivatingPanel` style and floating level, so the
    target app keeps focus until the user interacts. Esc closes it.
 4. Ribbon UI (SwiftUI, a single lane whose width comes from placement and
-   whose height comes from content). Target, Action, Direction and Run share
-   **one row**; each control names itself with an icon and a value rather than
-   a caption above it.
+   whose height comes from content). Target, five compact Action buttons and Run
+   form the default **one-row** interface. Selecting Custom moves that button to
+   the leading edge of the action strip, inserts Direction beside it, and grows
+   the centered ribbon from its standard width toward its expanded width.
    - **Target** — a chip reading "Selection · N" or "Document", opening a menu
      with the unabbreviated wording. If nothing was selected, default to
      Entire document and drop the menu.
-   - **Action** — Improve by default, or a named preset, or "Your instruction"
-     once the Direction field has anything in it.
-   - **Direction** — free-form instruction field ("Optional instruction…",
-     ⏎ submits). It wraps to four lines and then scrolls, growing the lane;
-     it caps at a readable measure rather than absorbing the whole row.
-   - **Run** — the accent control; ⏎ takes the same path.
-   - While running: a light travels the Run control's border over a steady
+   - **Actions** — Improve, Sharpen, Plan first, Tighten, and Custom are always
+     visible as tight buttons. Hovering replaces each title with its ⌘1…⌘5
+     shortcut without changing the button's size. Clicking a built-in or
+     pressing ⌘1 / ⌘2 / ⌘3 / ⌘4 runs it immediately; ⌘5 selects Custom without
+     running it.
+   - **Direction** — a hidden-by-default free-form field
+     ("Optional instruction…", ⏎ submits). Selecting Custom reveals
+     and focuses it with a fast horizontal grow. It wraps to four lines and then
+     scrolls, growing the lane; it caps at a readable measure rather than
+     absorbing the whole row.
+   - **Primary action** — the fixed-width accent control; ⏎ takes the same
+     path. It names the selected action ("Improving", "Sharpening", "Planning",
+     "Tightening", or "Working"). While a request runs, hovering changes the
+     label to "Cancel" and clicking it stops that request.
+   - While running: a light travels the primary control's border over a steady
      ember — a bright head over the accent fill, trailing a vermilion glow that
      spills onto the lane so the signal carries from across the row — and a dot
-     plus the running verb sits beside Run, with Cancel to its left. Reduce
-     Motion keeps the ember and drops the movement.
-   - Applied state: inline replacement is already pasted; the version counter
-     and the result word sit beside Run. Esc dismisses.
+     signals progress. Reduce Motion keeps the ember and drops the movement.
+   - Applied state: inline replacement is already pasted; ⌘Z walks backward
+     through the retained versions without adding an iteration control to the row.
    - Only a failure opens a **second row**, which carries the message and
      Details / Copy / Retry.
 5. **Execution** (`EditCoordinator`):
@@ -235,7 +217,7 @@ the coordinator, status menu, settings view, and debug CLI.
 ## Menu bar (`StatusBarController`)
 
 `NSStatusItem` with SF Symbol `hand.point.up.left.fill` (template image). Menu:
-- "Edit Selection…  ⌥⌘A" (triggers same flow as hotkey, hotkey shown reflects current binding if easy, else static)
+- "Edit Selection…  ⌃⌥⌘E" (triggers same flow as hotkey, hotkey shown reflects current binding if easy, else static)
 - "Provider: GitHub Copilot ✓/⚠︎" (disabled info row reflecting availability check)
 - Separator
 - "Accessibility permission…" — shown only when not granted; opens System Settings pane
@@ -258,7 +240,10 @@ so it comes to front). Sections:
   prompt=true and show an explanatory alert; menu item deep-links to
   `x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility`.
 - Info.plist: `LSUIElement = true`, `NSHumanReadableCopyright`, bundle id
-  `io.github.peteriz.mancia`, version 0.1.0. No sandbox (needed for CGEvent +
+  `io.github.peteriz.mancia`. `CFBundleShortVersionString`/`CFBundleVersion` are
+  the single source of truth for the version — the release workflow rewrites
+  them from the git tag, and the About panel reads them back, so no version
+  number is written in Swift or restated here. No sandbox (needed for CGEvent +
   spawning copilot).
 
 ## Build

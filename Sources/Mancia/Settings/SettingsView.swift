@@ -23,9 +23,8 @@ struct SettingsView: View {
     /// UI so falling back to a possibly-stale cache is visible rather than
     /// looking like the CLI genuinely offers nothing new.
     @State private var liveListingFailed = false
-    /// Guards against overlapping live fetches when the executable path is
-    /// edited and detected in quick succession.
-    @State private var refreshingModels = false
+    /// Lets a newer model/path refresh supersede an older in-flight request.
+    @State private var modelRefreshGeneration = 0
 
     /// Whether Accessibility is granted right now. Polled, because the grant
     /// happens in System Settings — another process — and there is no
@@ -56,54 +55,11 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Editing") {
-                Toggle(
-                    "Show ribbon when text is selected (Experimental)",
-                    isOn: $settings.showRibbonOnTextSelection)
-                Button {
-                    openSettingsFolder()
-                } label: {
-                    Label("Open settings folder", systemImage: "folder")
-                }
-                if let settingsFolderError {
-                    Text(settingsFolderError)
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                HStack {
-                    ColorPicker(
-                        "Smart Edit laser",
-                        selection: Binding(
-                            get: { Color(nsColor: settings.smartEditLaserColor) },
-                            set: { settings.smartEditLaserColor = NSColor($0) }
-                        ),
-                        supportsOpacity: false
-                    )
-                    Button {
-                        settings.smartEditLaserColor = AppSettings.color(
-                            from: AppSettings.defaultSmartEditLaserColorHex)
-                    } label: {
-                        Image(systemName: "arrow.counterclockwise")
-                    }
-                    .buttonStyle(.borderless)
-                    .disabled(
-                        settings.smartEditLaserColorHex
-                            == AppSettings.defaultSmartEditLaserColorHex)
-                    .help("Restore default laser color")
-                    .accessibilityLabel("Restore default laser color")
-                }
-            }
-
             Section("General") {
                 Toggle("Launch at login", isOn: Binding(
                     get: { settings.launchAtLogin },
                     set: { settings.launchAtLogin = $0 }
                 ))
-                Toggle("Hide menu bar icon", isOn: $settings.hideMenuBarIcon)
-                    .onChange(of: settings.hideMenuBarIcon) {
-                        onMenuBarVisibilityChange(!settings.hideMenuBarIcon)
-                    }
             }
 
             Section {
@@ -128,6 +84,15 @@ struct SettingsView: View {
             await refreshStatus()
             await refreshLiveModels()
         }
+        .onChange(of: settings.copilotModel) {
+            if CopilotModelCatalog.reasoningEfforts(
+                for: settings.copilotModel, in: models) == nil {
+                if !settings.copilotModelIsDerived { settings.reasoningEffort = "" }
+            } else {
+                settings.reconcileReasoningEffort(with: models)
+            }
+            Task { await refreshLiveModels() }
+        }
     }
 
     // MARK: - Readiness
@@ -143,9 +108,14 @@ struct SettingsView: View {
             : .attention("Not granted — Mancia can't read or replace text without it")
     }
 
+    /// The ready case names the CLI's install state only — "Installed", not
+    /// "Ready" — and folds in the sign-in caveat right where it's read, so this
+    /// row never reads as a claim that sign-in has been verified. Sign-in is
+    /// only ever checked when an action actually runs.
     private var providerState: ReadinessState {
         switch providerStatus {
-        case .ready: return .ready("Ready")
+        case .ready:
+            return .ready("Installed — sign-in is checked when you run an action")
         case .notFound: return .attention("Not found")
         case .error(let message): return .attention(message)
         }
@@ -229,36 +199,63 @@ struct SettingsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+        HStack {
+            ColorPicker(
+                "Working color:",
+                selection: Binding(
+                    get: { Color(nsColor: settings.swooshColor) },
+                    set: { settings.swooshColor = NSColor($0) }
+                ),
+                supportsOpacity: false
+            )
+            Button {
+                settings.swooshColor = AppSettings.color(
+                    from: AppSettings.defaultSwooshColorHex)
+            } label: {
+                Image(systemName: "arrow.counterclockwise")
+            }
+            .buttonStyle(.borderless)
+            .disabled(settings.swooshColorIsDefault)
+            .help("Restore the default working color")
+            .accessibilityLabel("Restore the default working color")
+        }
     }
 
     // MARK: - Status & guidance
 
     /// Inline, always-visible guidance for a non-ready provider, plus a
     /// context button so the user has a concrete next step rather than a
-    /// hover-only tooltip.
+    /// hover-only tooltip. Never rendered for `.ready` — the caller only shows
+    /// this when `providerStatus != .ready`.
     @ViewBuilder
     private var remediation: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(providerStatus.detail)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 12) {
-                switch providerStatus {
-                case .notFound:
+            switch providerStatus {
+            case .notFound:
+                Text(providerStatus.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 12) {
                     Button("Copy install command") {
                         copyToPasteboard(Self.installCommand)
                         detectFeedback = "Copied: \(Self.installCommand)"
                     }
-                case .error where isNotSignedIn:
-                    Text("Run `copilot` once in Terminal to sign in, then Check again.")
+                    Link("Copilot CLI docs", destination: Self.docsURL)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
-                default:
-                    EmptyView()
                 }
+            case .error:
+                // `checkAvailability` only confirms the CLI runs, so this
+                // never guesses at a sign-in fix — that's verified only when
+                // an action actually runs, and reported there if it fails.
+                Text("Run `copilot` directly in Terminal to see the full error.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 Link("Copilot CLI docs", destination: Self.docsURL)
                     .font(.caption)
+            case .ready:
+                EmptyView()
             }
         }
         .padding(10)
@@ -274,37 +271,31 @@ struct SettingsView: View {
         }
     }
 
-    private var isNotSignedIn: Bool {
-        if case .error(let message) = providerStatus {
-            return message.lowercased().contains("sign")
-        }
-        return false
-    }
-
     /// Models grouped into latency tiers, fastest first, for the sectioned
     /// picker above.
     private var modelTiers: [ModelTier] {
         CopilotModelCatalog.tiered(models)
     }
 
-    /// The measured ultra-fast default, so its row can be marked.
+    /// The measured ultra-fast, lowest-cost default, so its row can be marked.
     private var recommendedModelID: String? {
         CopilotModelCatalog.recommendedFastModel(from: models)
     }
 
+    /// Labeled by what the ranking actually measures — latency and price — never
+    /// as a quality judgment the catalog has no data to support.
     private func modelLabel(for model: CopilotModel) -> String {
-        model.id == recommendedModelID ? "\(model.name) (Recommended)" : model.name
+        model.id == recommendedModelID ? "\(model.name) (Fast, low cost)" : model.name
     }
 
-    /// Effort levels for the picker: the selected model's supported levels when
-    /// the cache knows them, else all CLI levels; always includes the stored
-    /// value so the picker binding stays valid.
+    /// Effort levels for the selected model. Unknown support shows only the
+    /// stored value and Default; values from unrelated models are never mixed.
     private var reasoningEffortOptions: [String] {
-        var options = models.first { $0.id == settings.copilotModel }?.supportedReasoningEfforts
-            ?? CopilotModelCatalog.reasoningEfforts(in: models)
-        let stored = settings.reasoningEffort
-        if !stored.isEmpty, !options.contains(stored) { options.append(stored) }
-        return options
+        if let supported = CopilotModelCatalog.reasoningEfforts(
+            for: settings.copilotModel, in: models) {
+            return supported
+        }
+        return settings.reasoningEffort.isEmpty ? [] : [settings.reasoningEffort]
     }
 
     private func detect() {
@@ -351,22 +342,27 @@ struct SettingsView: View {
     ///
     /// `~/.copilot/data.db` only gets rewritten when the interactive Copilot
     /// TUI runs, so on a machine that only ever drives Copilot through Mancia
-    /// it can be badly stale and hide newly released models. Asking the running
-    /// CLI reuses the sidecar's warm session, and a failure leaves the cached
-    /// list in place — flagged in the UI rather than passed off as current.
+    /// it can be badly stale and hide newly released models. Asking the sidecar
+    /// at the model's default effort avoids letting an incompatible saved value
+    /// block discovery; a failure leaves the cached list in place, flagged in
+    /// the UI rather than passed off as current.
     private func refreshLiveModels() async {
-        guard let provider = provider as? ModelListingProvider, !refreshingModels else { return }
-        refreshingModels = true
-        defer { refreshingModels = false }
+        guard let provider = provider as? ModelListingProvider else { return }
+        modelRefreshGeneration &+= 1
+        let generation = modelRefreshGeneration
         let live = await provider.availableModels()
+        guard generation == modelRefreshGeneration else { return }
         guard !live.isEmpty else {
             models = cachedModels
             liveListingFailed = true
             return
         }
         liveListingFailed = false
+        // Keep metadata learned for previously selected live-only models while
+        // replacing membership with the newest authoritative list.
+        let enrichedLive = CopilotModelCatalog.merged(live: live, cached: models)
         models = CopilotModelCatalog.pickerModels(
-            live: live,
+            live: enrichedLive,
             cached: cachedModels,
             storedModel: settings.copilotModel
         )
@@ -374,6 +370,7 @@ struct SettingsView: View {
         // that could only be ranked against the cache. No-op once the user
         // has picked a model themselves.
         settings.adoptDerivedDefault(from: models)
+        settings.reconcileReasoningEffort(with: models)
     }
 
     private func refreshStatus() async {
