@@ -4,7 +4,65 @@ import AppKit
 import KeyboardShortcuts
 @testable import Mancia
 
+@MainActor
+@Test("Reopening the running app presents its command window")
+func appReopenPresentsCommandWindow() {
+    let app = NSApplication.shared
+    let delegate = AppDelegate()
+    let existingWindows = Set(app.windows.map(ObjectIdentifier.init))
+
+    #expect(delegate.applicationShouldHandleReopen(app, hasVisibleWindows: false))
+
+    let window = app.windows.first {
+        !existingWindows.contains(ObjectIdentifier($0)) && $0.title == "Mancia"
+    }
+    #expect(window?.isVisible == true)
+    window?.close()
+}
+
 // MARK: - Prompt templates
+
+@Test("Prompt settings load actions and overrides from disk")
+func promptStoreLoadsEditableSettings() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("mancia-prompts-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try "Loaded instruction".write(
+        to: directory.appendingPathComponent("loaded.md"),
+        atomically: true,
+        encoding: .utf8)
+    try """
+    prompts:
+      - file: disabled.md
+        title: Disabled
+        symbol: xmark
+        progress: Skipping
+        enabled: false
+      - file: loaded.md
+        title: Loaded prompt
+        symbol: doc.text
+        progress: Loading
+        overide_model: custom-model
+        overide_reasoning_effort: low
+        enabled: true
+    """.write(
+        to: directory.appendingPathComponent("prompts.yaml"),
+        atomically: true,
+        encoding: .utf8)
+
+    let presets = try PromptStore.loadOrCreate(at: directory)
+
+    #expect(presets.count == 1)
+    #expect(presets[0].id == "loaded")
+    #expect(presets[0].title == "Loaded prompt")
+    #expect(presets[0].symbol == "doc.text")
+    #expect(presets[0].progressLabel == "Loading")
+    #expect(presets[0].action == .prompt(
+        instruction: "Loaded instruction", progressLabel: "Loading"))
+    #expect(presets[0].requestOverrides == LLMRequestOverrides(
+        model: "custom-model", reasoningEffort: "low"))
+}
 
 @Test("Every action embeds the input text and the output-only clause")
 func promptContainsTextAndClause() {
@@ -399,6 +457,25 @@ func swooshColorNormalizesAndPersists() {
     #expect(
         AppSettings.color(from: AppSettings.defaultSwooshColorHex)
             == Palette.nsColor(0x49B8FF))
+}
+
+@MainActor
+@Test("Random swoosh mode persists and stays stable within a session")
+func randomSwooshColorPersists() {
+    let suite = "mancia-test-\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    let first = AppSettings(defaults: defaults, modelCatalog: { [] })
+    #expect(first.swooshColorMode == .fixed)
+    first.swooshColorMode = .random
+    let sessionOne = AppSettings.hexString(from: first.resolvedSwooshColor(session: 1))
+    #expect(AppSettings.hexString(from: first.resolvedSwooshColor(session: 1)) == sessionOne)
+    #expect(AppSettings.hexString(from: first.resolvedSwooshColor(session: 2)) != sessionOne)
+
+    let second = AppSettings(defaults: defaults, modelCatalog: { [] })
+    #expect(second.swooshColorMode == .random)
+    #expect(AppSettings.hexString(from: second.resolvedSwooshColor(session: 1)) == sessionOne)
 }
 
 @MainActor
@@ -1421,14 +1498,14 @@ func panelKeyCommandsRejectNonShortcuts() {
     #expect(PanelKeyCommand.resolve(characters: nil, modifiers: .command) == nil)
     #expect(PanelKeyCommand.resolve(characters: "\r", modifiers: []) == nil)
     for digit in ["1", "2", "3", "4", "5"] {
-        for modifiers: NSEvent.ModifierFlags in [.command, .shift, .option, .control] {
+        for modifiers: NSEvent.ModifierFlags in [.shift, .option, .control, [.command, .shift]] {
             #expect(PanelKeyCommand.resolve(characters: digit, modifiers: modifiers) == nil)
         }
     }
     #expect(PanelKeyCommand.resolve(characters: "0", modifiers: []) == nil)
     #expect(PanelKeyCommand.resolve(characters: "6", modifiers: []) == nil)
     #expect(PanelKeyCommand.resolve(characters: "0", modifiers: .command) == nil)
-    #expect(PanelKeyCommand.resolve(characters: "6", modifiers: .command) == nil)
+    #expect(PanelKeyCommand.resolve(characters: "6", modifiers: .command) == .activateAction(5))
 }
 
 @Test("Tab and shift-Tab resolve to focus moves")
@@ -1497,21 +1574,24 @@ func ribbonEscapeBacksOutOfTheRunFirst() {
 func ribbonFocusCycles() {
     let model = PanelModel()
     model.reset(hasSelection: true, charCount: 12)
-    #expect(model.focusedCell == .none)
+    model.showSmartEdit()
+    #expect(model.focusedCell == .action(0))
     #expect(model.focusableCells == [
-        .action(0), .action(1), .action(2), .action(3), .action(4), .target,
+        .action(0), .action(1), .action(2), .action(3), .action(4), .target, .back,
     ])
 
     model.moveFocus(.next)
-    #expect(model.focusedCell == .action(0))
+    #expect(model.focusedCell == .action(1))
 
     model.moveFocus(.previous)
-    #expect(model.focusedCell == .target)
+    #expect(model.focusedCell == .action(0))
+    model.moveFocus(.previous)
+    #expect(model.focusedCell == .back)
 
     model.selectCustomInstruction()
     #expect(model.focusedCell == .direction)
     #expect(model.focusableCells == [
-        .action(0), .action(1), .action(2), .action(3), .direction, .run, .target,
+        .action(0), .action(1), .action(2), .action(3), .direction, .run, .target, .back,
     ])
     model.moveFocus(.next)
     #expect(model.focusedCell == .run)
@@ -1522,23 +1602,25 @@ func ribbonFocusCycles() {
 func ribbonFocusIgnoresSelectionCapture() {
     let model = PanelModel()
     model.reset(hasSelection: false, charCount: 0)
+    model.showSmartEdit()
     #expect(model.focusableCells == [
-        .action(0), .action(1), .action(2), .action(3), .action(4),
+        .action(0), .action(1), .action(2), .action(3), .action(4), .back,
     ])
 
     model.moveFocus(.next)
-    #expect(model.focusedCell == .action(0))
+    #expect(model.focusedCell == .action(1))
 
     // Capturing hides the menu the same way, so the cell drops out too.
     model.reset(hasSelection: true, charCount: 8)
+    model.showSmartEdit()
     model.capturing = true
     #expect(model.focusableCells == [
-        .action(0), .action(1), .action(2), .action(3), .action(4),
+        .action(0), .action(1), .action(2), .action(3), .action(4), .back,
     ])
 
     model.selectCustomInstruction()
     #expect(model.focusableCells == [
-        .action(0), .action(1), .action(2), .action(3), .direction, .run,
+        .action(0), .action(1), .action(2), .action(3), .direction, .run, .back,
     ])
 }
 
@@ -1565,6 +1647,7 @@ func ribbonKeyboardActionsRunImmediately() {
     var calls: [(EditAction, String?)] = []
     model.onPerform = { calls.append(($0, $1)) }
     model.reset(hasSelection: true, charCount: 40)
+    model.showSmartEdit()
 
     for (index, preset) in PanelPreset.keyboardActions.enumerated() {
         let before = calls.count
@@ -1585,6 +1668,7 @@ func ribbonCustomShortcutDisclosesWithoutRunning() {
     var calls: [EditAction] = []
     model.onPerform = { action, _ in calls.append(action) }
     model.reset(hasSelection: true, charCount: 40)
+    model.showSmartEdit()
     let before = model.focusSeq
 
     model.activateAction(at: PanelModel.customActionIndex)
@@ -1661,7 +1745,7 @@ func ribbonTargetShortcutWaitsForCapture() {
 }
 
 @MainActor
-@Test("A fresh session starts without focusing an action")
+@Test("A fresh session focuses Smart Edit in the opening menu")
 func ribbonResetClearsFocus() {
     let model = PanelModel()
     model.focusedCell = .direction
@@ -1669,7 +1753,8 @@ func ribbonResetClearsFocus() {
 
     model.reset(hasSelection: true, charCount: 30)
 
-    #expect(model.focusedCell == .none)
+    #expect(model.screen == .menu)
+    #expect(model.focusedCell == .action(2))
     #expect(
         model.sessionSeq == before &+ 1,
         "the lane's hosting view outlives a session, so the bump clears stale focus")
@@ -1680,6 +1765,7 @@ func ribbonResetClearsFocus() {
 func ribbonActionChoiceReturnsPrimaryFocus() {
     let model = PanelModel()
     model.reset(hasSelection: true, charCount: 40)
+    model.showSmartEdit()
     model.focusedCell = .action(0)
     let before = model.focusSeq
 
@@ -1827,6 +1913,42 @@ func actionButtonOrder() {
     #expect(model.actionDisplayOrder == [0, 1, 2, 3, 4])
     #expect(model.isActionSelected(at: 4))
     #expect(!model.isActionSelected(at: 0))
+}
+
+@MainActor
+@Test("The action strip uses the loaded prompt catalog")
+func loadedPromptCatalogDrivesActions() {
+    let override = LLMRequestOverrides(model: "custom-model", reasoningEffort: "low")
+    let loaded = PanelPreset(
+        id: "loaded",
+        title: "Loaded prompt",
+        action: .prompt(instruction: "Loaded instruction", progressLabel: "Loading"),
+        symbol: "doc.text",
+        progressLabel: "Loading",
+        requestOverrides: override)
+    let model = PanelModel()
+
+    model.setPresets([loaded])
+
+    #expect(model.actionDisplayOrder == [0, 1])
+    #expect(model.actionTitle(at: 0) == "Loaded prompt")
+    #expect(model.actionSymbol(at: 0) == "doc.text")
+    #expect(model.actionProgressLabel(at: 0) == "Loading")
+    #expect(model.actionTitle(at: 1) == "Custom")
+    #expect(model.requestOverrides == override)
+}
+
+@MainActor
+@Test("Disabling every prompt leaves only Custom")
+func emptyLoadedPromptCatalogUsesCustom() {
+    let model = PanelModel()
+
+    model.setPresets([])
+
+    #expect(model.actionDisplayOrder == [0])
+    #expect(model.actionTitle(at: 0) == "Custom")
+    #expect(model.isCustomInstructionSelected)
+    #expect(model.requestOverrides == nil)
 }
 
 @MainActor
@@ -2065,7 +2187,7 @@ func restoreDefaultActionPreservesCustom() {
     #expect(model.focusedCell == .none)
 }
 
-@Test("A new session restores the buttons-only Improve default")
+@Test("A new session opens the menu and resets the Smart Edit default")
 @MainActor
 func resetRestoresDefaultAction() {
     let model = PanelModel()
@@ -2077,7 +2199,8 @@ func resetRestoresDefaultAction() {
     #expect(model.actionChoice == .preset(.improve))
     #expect(model.resolvedActionTitle == "Improve")
     #expect(!model.isCustomInstructionSelected)
-    #expect(model.focusedCell == .none)
+    #expect(model.screen == .menu)
+    #expect(model.focusedCell == .action(2))
 }
 
 // MARK: - Ribbon placement

@@ -28,9 +28,9 @@ window, no copy-paste round trip.
   Accessibility evidence identifying the editable field and its contents.
   If Mancia cannot verify a safe replacement, it keeps the result available
   to copy instead of guessing where to paste.
-- The ribbon opens **against the text you selected**: below or above a short
-  selection, beside a tall block, and at a predictable fallback position when
-  there is no room.
+- The ribbon opens **near the mouse pointer** on its display: below it when
+  there is room, or above it near the bottom edge. It keeps that opening point
+  while you use it rather than chasing subsequent mouse movement.
 - **Improve** clarifies coding-agent requests and everyday prose, **Sharpen**
   turns rough requests into clear instructions, **Plan first** rewrites a
   request to ask an agent for a short plan with goals and verifiers before
@@ -88,7 +88,11 @@ signed, so macOS asks again after each rebuild.
 
 1. Select text in any app.
 2. Press <kbd>⌃</kbd><kbd>⌥</kbd><kbd>⌘</kbd><kbd>E</kbd>.
-3. Click **Improve**, **Sharpen**, **Plan first**, or **Tighten** to run that
+3. Choose **Oops**, **Snippets**, or **Smart Edit** from the opening menu.
+  Oops fixes English/Hebrew keyboard-layout mistakes locally. Snippets inserts
+  a saved entry from `~/Documents/Mancia/snippets.yaml`, replacing selected
+  text or inserting at a verified caret. Neither action sends text to Copilot.
+4. In **Smart Edit**, click **Improve**, **Sharpen**, **Plan first**, or **Tighten** to run that
    action immediately. For anything else, click **Custom**, enter an instruction
    such as *“make it decisive, one sentence”* or *“turn these notes into bullets”*,
    then press <kbd>Return</kbd> or click **Run**.
@@ -98,7 +102,7 @@ document. When the field and original text still match, the result replaces
 the selection in place. If the target changed or cannot be verified, Mancia
 keeps the result available through **Copy result**.
 
-With no selection, Mancia asks before reading and sending the whole document
+With no selection, Smart Edit asks before reading and sending the whole document
 through Copilot. It then asks separately before replacing the document, with
 the result and an optional comparison available to inspect. Only the second
 confirmation can be disabled in Settings.
@@ -111,17 +115,19 @@ and links are not guaranteed to survive.
 | Key | Does |
 | --- | --- |
 | <kbd>⌃⌥⌘E</kbd> | Open an edit session (configurable in Settings) |
-| <kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> / <kbd>4</kbd> | Run Improve / Sharpen / Plan first / Tighten while the ribbon has focus, except when typing in Custom |
+| <kbd>⌘1</kbd> / <kbd>⌘2</kbd> / <kbd>⌘3</kbd> | Choose Oops / Snippets / Smart Edit in the opening menu; bare 1 / 2 / 3 also work |
+| <kbd>⌘1</kbd> through <kbd>⌘9</kbd> | Choose a snippet; in Smart Edit, ⌘1 through ⌘5 activate the matching action control |
+| <kbd>1</kbd> through <kbd>5</kbd> | Choose a visible snippet; in Smart Edit, run Improve / Sharpen / Plan first / Tighten or open Custom |
 | <kbd>5</kbd> | Open Custom while the ribbon has focus; digits remain normal text inside its editor |
 | <kbd>Return</kbd> | Activate the focused control or submit Custom; review and approval buttons must be focused explicitly |
-| <kbd>⌘Return</kbd> | Run the current action unless a request or approval is in progress |
+| <kbd>⌘Return</kbd> | Enter Smart Edit from the menu, insert the focused snippet, or run the current Smart Edit action; inactive during requests and approvals |
 | <kbd>Tab</kbd> / <kbd>⇧Tab</kbd> | Move forward / backward through the ribbon controls |
 | <kbd>⌘T</kbd> | Switch between the current selection and the whole document when a selection exists |
 | <kbd>⌘Z</kbd> | Undo typing in Custom first; otherwise restore the previous Mancia-applied version |
 | <kbd>⌘⇧Z</kbd> | Redo typing in the Custom field |
 | <kbd>⌘A</kbd> / <kbd>⌘X</kbd> / <kbd>⌘C</kbd> / <kbd>⌘V</kbd> | Edit text in the Custom field |
 | <kbd>⌘,</kbd> | Open Settings |
-| <kbd>Esc</kbd> | Cancel a request, decline a pending approval, or collapse an open retained result; otherwise close |
+| <kbd>Esc</kbd> | Cancel a request, decline a pending approval, or collapse an open retained result; return from an idle submenu to the menu, otherwise close |
 | <kbd>⌘W</kbd> | Close the ribbon |
 
 **Settings** changes the global shortcut, whole-document replacement

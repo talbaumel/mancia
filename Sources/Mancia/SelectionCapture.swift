@@ -145,6 +145,29 @@ struct SelectionCaptureResult {
     }
 
     var targetApp: NSRunningApplication? { target?.targetApp }
+
+    var snippetTarget: SelectionTargetEvidence? {
+        guard let target, target.scope == .selection else { return nil }
+        switch outcome {
+        case .selected:
+            return target
+        case .noSelection:
+            guard target.selectedRange?.length == 0,
+                  target.focusedElement != nil,
+                  target.capturedFieldValue != nil else { return nil }
+            return SelectionTargetEvidence(
+                pid: target.pid,
+                capturedBaseline: "",
+                capturedFieldValue: target.capturedFieldValue,
+                scope: .selection,
+                targetApp: target.targetApp,
+                window: target.window,
+                focusedElement: target.focusedElement,
+                selectedRange: target.selectedRange)
+        case .uncertain, .failed:
+            return nil
+        }
+    }
 }
 
 enum SelectionRetentionReason: Equatable, LocalizedError {

@@ -44,6 +44,15 @@ enum PanelKeyCommand: Equatable {
         case (",", [.command]): return .openSettings
         case ("\r", [.command]): return .submit
         case ("t", [.command]): return .toggleTarget
+        case ("1", [.command]): return .activateAction(0)
+        case ("2", [.command]): return .activateAction(1)
+        case ("3", [.command]): return .activateAction(2)
+        case ("4", [.command]): return .activateAction(3)
+        case ("5", [.command]): return .activateAction(4)
+        case ("6", [.command]): return .activateAction(5)
+        case ("7", [.command]): return .activateAction(6)
+        case ("8", [.command]): return .activateAction(7)
+        case ("9", [.command]): return .activateAction(8)
         case ("1", []): return .activateAction(0)
         case ("2", []): return .activateAction(1)
         case ("3", []): return .activateAction(2)

@@ -188,30 +188,6 @@ final class CopilotCLIProvider: LLMProvider {
         )
     }
 
-    static func warmConfigs(
-        executable: String,
-        defaultModel: String,
-        defaultReasoningEffort: String,
-        overrides: [LLMRequestOverrides]
-    ) -> [CopilotACPConfig] {
-        var configs = [CopilotACPConfig(
-            executable: executable,
-            model: defaultModel,
-            reasoningEffort: defaultReasoningEffort)]
-        for override in overrides {
-            let resolved = requestConfig(
-                defaultModel: defaultModel,
-                defaultReasoningEffort: defaultReasoningEffort,
-                overrides: override)
-            let config = CopilotACPConfig(
-                executable: executable,
-                model: resolved.model,
-                reasoningEffort: resolved.reasoningEffort)
-            if !configs.contains(config) { configs.append(config) }
-        }
-        return Array(configs.prefix(CopilotACPSidecar.maximumClients))
-    }
-
     func complete(_ prompt: String) async throws -> String {
         try await complete(prompt, overrides: nil)
     }
@@ -252,16 +228,16 @@ final class CopilotCLIProvider: LLMProvider {
 
         var combined = result.stdout + "\n" + result.stderr
         if Self.shouldRetryWithoutReasoningEffort(
-            text: combined, reasoningEffort: reasoningEffort
+            text: combined, reasoningEffort: requestConfig.reasoningEffort
         ) {
             await MainActor.run {
-                if self.settings.copilotModel == model,
-                   self.settings.reasoningEffort == reasoningEffort {
+                if self.settings.copilotModel == requestConfig.model,
+                   self.settings.reasoningEffort == requestConfig.reasoningEffort {
                     self.settings.reasoningEffort = ""
                 }
             }
             let retryArgs = Self.arguments(
-                executable: executable, prompt: prompt, model: model,
+                executable: executable, prompt: prompt, model: requestConfig.model,
                 reasoningEffort: ""
             )
             result = try await Self.runProcess(
@@ -375,24 +351,12 @@ extension CopilotCLIProvider: ModelListingProvider {
 
 extension CopilotCLIProvider: WarmableLLMProvider {
     func prepareForPanel() async {
-        await prepareForPanel(overrides: [])
-    }
-
-    func prepareForPanel(overrides: [LLMRequestOverrides]) async {
         let (path, model, reasoningEffort) = await config()
         let executable = Self.resolveExecutable(override: path.isEmpty ? nil : path)
-        let configs = Self.warmConfigs(
-            executable: executable,
-            defaultModel: model,
-            defaultReasoningEffort: reasoningEffort,
-            overrides: overrides)
-        await withTaskGroup(of: Void.self) { group in
-            for config in configs {
-                group.addTask { [acpSidecar] in
-                    await acpSidecar.prepare(config: config)
-                }
-            }
-        }
+        await acpSidecar.prepare(
+            config: CopilotACPConfig(
+                executable: executable, model: model, reasoningEffort: reasoningEffort)
+        )
     }
 
     func panelDidClose() async {

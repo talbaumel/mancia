@@ -21,6 +21,20 @@ enum PostApplyBehavior: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+enum SwooshColorMode: String, CaseIterable, Identifiable, Sendable {
+    case fixed
+    case random
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .fixed: return "Color"
+        case .random: return "Random"
+        }
+    }
+}
+
 /// UserDefaults-backed, observable app settings. Main-actor isolated because it
 /// drives the UI and touches login-item registration.
 @MainActor
@@ -39,6 +53,7 @@ final class AppSettings {
         static let postApplyBehavior = "postApplyBehavior"
         static let confirmWholeDocumentReplace = "confirmWholeDocumentReplace"
         static let swooshColor = "swooshColor"
+        static let swooshColorMode = "swooshColorMode"
     }
 
     private let defaults: UserDefaults
@@ -87,6 +102,9 @@ final class AppSettings {
     /// data so the value stays readable in defaults and diffable in a test.
     private(set) var swooshColorHex: String {
         didSet { defaults.set(swooshColorHex, forKey: Key.swooshColor) }
+    }
+    var swooshColorMode: SwooshColorMode {
+        didSet { defaults.set(swooshColorMode.rawValue, forKey: Key.swooshColorMode) }
     }
     var swooshColor: NSColor {
         get { Self.color(from: swooshColorHex) }
@@ -157,6 +175,8 @@ final class AppSettings {
         self.confirmWholeDocumentReplace =
             defaults.object(forKey: Key.confirmWholeDocumentReplace) as? Bool ?? true
         self.swooshColorHex = Self.normalizedColorHex(defaults.string(forKey: Key.swooshColor))
+        self.swooshColorMode = defaults.string(forKey: Key.swooshColorMode)
+            .flatMap(SwooshColorMode.init(rawValue:)) ?? .fixed
     }
 
     // MARK: - Swoosh color
@@ -190,6 +210,20 @@ final class AppSettings {
             Int((rgb.redComponent * 255).rounded()),
             Int((rgb.greenComponent * 255).rounded()),
             Int((rgb.blueComponent * 255).rounded()))
+    }
+
+    /// Resolve the swoosh once per ribbon session. Random mode is seeded rather
+    /// than sampled on every read so live and measurement views keep the same
+    /// color through content-driven resizes.
+    func resolvedSwooshColor(session: Int) -> NSColor {
+        guard swooshColorMode == .random else { return swooshColor }
+        var value = UInt64(truncatingIfNeeded: session)
+        value &+= 0x9E37_79B9_7F4A_7C15
+        value = (value ^ (value >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        value = (value ^ (value >> 27)) &* 0x94D0_49BB_1331_11EB
+        value ^= value >> 31
+        let hue = CGFloat(Double(value >> 11) / 9_007_199_254_740_992)
+        return NSColor(calibratedHue: hue, saturation: 0.82, brightness: 1, alpha: 1)
     }
 
     // MARK: - Launch at login

@@ -16,6 +16,24 @@
 # other injected git config untouched. It is a no-op in normal environments.
 set -euo pipefail
 
+# Standalone Command Line Tools can ship SwiftUI declarations without the
+# SwiftUIMacros plugin needed to compile them. Prefer a complete Xcode in that
+# case, while respecting any toolchain the caller selected explicitly.
+if [[ -z "${DEVELOPER_DIR:-}" ]]; then
+	selected_developer_dir="$(xcode-select -p 2>/dev/null || true)"
+	selected_macro="$selected_developer_dir/Platforms/MacOSX.platform/Developer/usr/lib/swift/host/plugins/libSwiftUIMacros.dylib"
+	if [[ ! -f "$selected_macro" ]]; then
+		for xcode_app in /Applications/Xcode.app /Applications/Xcode-beta.app; do
+			developer_dir="$xcode_app/Contents/Developer"
+			macro="$developer_dir/Platforms/MacOSX.platform/Developer/usr/lib/swift/host/plugins/libSwiftUIMacros.dylib"
+			if [[ -f "$macro" ]]; then
+				export DEVELOPER_DIR="$developer_dir"
+				break
+			fi
+		done
+	fi
+fi
+
 count="${GIT_CONFIG_COUNT:-0}"
 export "GIT_CONFIG_KEY_${count}=safe.bareRepository"
 export "GIT_CONFIG_VALUE_${count}=all"

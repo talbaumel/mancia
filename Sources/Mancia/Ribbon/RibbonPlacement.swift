@@ -214,7 +214,7 @@ enum RibbonPlacement {
     static func compactSnippetWidth(for title: String) -> CGFloat {
         let font = NSFont.systemFont(ofSize: 13, weight: .semibold)
         let textWidth = ceil((title as NSString).size(withAttributes: [.font: font]).width)
-        return min(compactSnippetMaxWidth, max(compactSnippetMinWidth, textWidth + 40))
+        return min(compactSnippetMaxWidth, max(compactSnippetMinWidth, textWidth + 24))
     }
 
     static let compactWidth: CGFloat =
@@ -222,7 +222,31 @@ enum RibbonPlacement {
 
     static func snippetsWidth(titles: [String]) -> CGFloat {
         let widths = titles.map(compactSnippetWidth)
-        return widths.reduce(0, +) + CGFloat(max(0, widths.count - 1) * 8) + 24
+        // Row padding + Back + spacing + scroll padding around the buttons.
+        return widths.reduce(0, +) + CGFloat(max(0, widths.count - 1) * 8) + 62
+    }
+
+    static func contentWidth(
+        screen: PanelModel.Screen,
+        presets: [PanelPreset],
+        snippetTitles: [String],
+        snippetError: String?,
+        customExpanded: Bool
+    ) -> CGFloat {
+        switch screen {
+        case .menu:
+            return compactWidth
+        case .snippets:
+            let titles = snippetTitles.isEmpty
+                ? [snippetError ?? "No snippets"]
+                : snippetTitles
+            return min(maximumWidth, snippetsWidth(titles: titles))
+        case .smartEdit:
+            return customExpanded
+                ? expandedWidth
+                : min(maximumWidth, smartEditWidth(
+                    presets: presets, customExpanded: false))
+        }
     }
 
     static func smartEditActionWidth(title: String, progress: String) -> CGFloat {

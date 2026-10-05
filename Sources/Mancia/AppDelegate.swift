@@ -10,6 +10,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var coordinator: EditCoordinator?
     private var statusBar: StatusBarController?
     private var hotkey: HotkeyManager?
+    private var commandWindow: NSWindow?
+    private var commandTargetApp: NSRunningApplication?
     private var settingsWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -25,6 +27,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         self.hotkey = HotkeyManager { [weak self] in self?.coordinator?.start() }
         Task { await provider.refreshModelsAndPrepare() }
+    }
+
+    func applicationShouldHandleReopen(
+        _ sender: NSApplication, hasVisibleWindows flag: Bool
+    ) -> Bool {
+        showCommandWindow()
+        return true
+    }
+
+    private func showCommandWindow() {
+        commandTargetApp = NSWorkspace.shared.frontmostApplication.flatMap { app in
+            app.processIdentifier == ProcessInfo.processInfo.processIdentifier ? nil : app
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        if let commandWindow {
+            commandWindow.makeKeyAndOrderFront(nil)
+            return
+        }
+        let hosting = NSHostingController(rootView: StartupMenuView(
+            provider: provider,
+            onEdit: { [weak self] in self?.startFromCommandWindow() },
+            onSettings: { [weak self] in
+                self?.commandWindow?.close()
+                self?.showSettings()
+            },
+            onAbout: { [weak self] in
+                self?.commandWindow?.close()
+                self?.showAbout()
+            }
+        ))
+        let window = NSWindow(
+            contentRect: .zero,
+            styleMask: [.titled, .closable, .miniaturizable],
+            backing: .buffered,
+            defer: false)
+        window.title = "Mancia"
+        window.contentViewController = hosting
+        window.isReleasedWhenClosed = false
+        window.center()
+        commandWindow = window
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    private func startFromCommandWindow() {
+        commandWindow?.close()
+        let target = commandTargetApp
+        Task { @MainActor [weak self] in
+            target?.activate()
+            try? await Task.sleep(for: .milliseconds(120))
+            self?.coordinator?.start()
+        }
     }
 
     private func showSettings() {

@@ -22,6 +22,12 @@ final class PanelModel {
         case error
     }
     enum Scope: Equatable { case selection, document }
+    enum Screen: Equatable { case menu, snippets, smartEdit }
+    var screen: Screen = .smartEdit
+    var snippets: [TextSnippet] = []
+    var snippetError: String?
+    var onOops: (() -> Void)?
+    var onSnippet: ((TextSnippet) -> Void)?
     /// The ribbon's focusable cells. Action carries its stable catalog index;
     /// Run exists only inside the disclosed Custom field. None keeps a fresh
     /// ribbon visually neutral until the user chooses a control.
@@ -33,6 +39,7 @@ final class PanelModel {
     /// keyboard order, keeping the first Tab on the primary action.
     enum Cell: Hashable {
         case none
+        case back
         case action(Int)
         case direction
         case run
@@ -53,9 +60,14 @@ final class PanelModel {
     /// an empty Custom field distinct from the default Improve action.
     enum ActionChoice: Equatable { case preset(PanelPreset), custom }
 
-    /// Custom follows the four presets in the default strip and owns shortcut 5.
+    /// Static defaults retained for callers and tests that describe the stock strip.
     static let customActionIndex = PanelPreset.all.count
     static let actionIndices = Array(0...customActionIndex)
+
+    var presets = PanelPreset.all
+    var promptError: String?
+    var customActionIndex: Int { presets.count }
+    var actionIndices: [Int] { Array(0...customActionIndex) }
 
     var phase: Phase = .idle {
         didSet {
@@ -96,6 +108,7 @@ final class PanelModel {
     /// Describes a whole-document generation request without exposing or
     /// capturing the document text before the user approves it.
     var pendingScopeApprovalActionTitle = ""
+    var pendingScopeApprovalIsLocal = false
     /// Size of the document and the pending result while awaiting confirmation
     /// of a whole-document replacement (`.confirm` phase).
     var pendingOriginalCharCount = 0
@@ -192,6 +205,8 @@ final class PanelModel {
             onDeclinePending?()
         } else if phase == .retained, retainedResultExpanded {
             retainedResultExpanded = false
+        } else if phase == .idle, screen != .menu {
+            showMenu()
         } else {
             onCancel?()
         }
@@ -199,6 +214,7 @@ final class PanelModel {
 
     func reset(hasSelection: Bool, charCount: Int) {
         phase = .idle
+        screen = .menu
         self.hasSelection = hasSelection
         selectionCharCount = charCount
         targetAppName = ""
@@ -209,6 +225,7 @@ final class PanelModel {
         runningTitle = ""
         errorText = ""
         pendingScopeApprovalActionTitle = ""
+        pendingScopeApprovalIsLocal = false
         pendingOriginalCharCount = 0
         pendingResultCharCount = 0
         pendingResultPreview = ""
@@ -223,8 +240,51 @@ final class PanelModel {
         versionCount = 0
         currentIndex = 0
         undoAvailable = false
-        focusedCell = .none
+        focusedCell = .action(2)
         sessionSeq &+= 1
+    }
+
+    func setPresets(_ presets: [PanelPreset]) {
+        self.presets = presets
+        actionChoice = presets.first.map(ActionChoice.preset) ?? .custom
+    }
+
+    func showMenu() {
+        guard !isLocked else { return }
+        screen = .menu
+        focusedCell = .action(2)
+        focusSeq &+= 1
+    }
+
+    func showSmartEdit() {
+        guard !isLocked else { return }
+        screen = .smartEdit
+        returnFocusToPrimaryControl()
+    }
+
+    func showSnippets() {
+        guard !isLocked else { return }
+        screen = .snippets
+        focusedCell = snippets.isEmpty ? .back : .action(0)
+        focusSeq &+= 1
+    }
+
+    func activateNumberedButton(at index: Int) {
+        guard !isLocked else { return }
+        switch screen {
+        case .menu:
+            switch index {
+            case 0: onOops?()
+            case 1: showSnippets()
+            case 2: showSmartEdit()
+            default: break
+            }
+        case .snippets:
+            guard snippets.indices.contains(index) else { return }
+            onSnippet?(snippets[index])
+        case .smartEdit:
+            activateAction(at: index)
+        }
     }
 
     /// ⌘T and the Target menu. Aiming at the selection is inert when there is
@@ -248,8 +308,8 @@ final class PanelModel {
     /// Select a preset without running it. Kept separate from activation for
     /// state restoration and tests; visible action buttons use `activateAction`.
     func selectPreset(at index: Int) {
-        guard !isLocked, PanelPreset.all.indices.contains(index) else { return }
-        actionChoice = .preset(PanelPreset.all[index])
+        guard !isLocked, presets.indices.contains(index) else { return }
+        actionChoice = .preset(presets[index])
         returnFocusToPrimaryControl()
     }
 
@@ -264,12 +324,12 @@ final class PanelModel {
     /// replaces its button with the field and hands focus to it.
     func activateAction(at index: Int) {
         guard !isLocked else { return }
-        if PanelPreset.keyboardActions.indices.contains(index) {
-            let preset = PanelPreset.keyboardActions[index]
+        if presets.indices.contains(index) {
+            let preset = presets[index]
             actionChoice = .preset(preset)
             returnFocusToPrimaryControl()
             onPerform?(preset.action, nil)
-        } else if index == Self.customActionIndex {
+        } else if index == customActionIndex {
             selectCustomInstruction()
         }
     }
@@ -286,7 +346,7 @@ final class PanelModel {
     /// session refuses it too, because there is only one valid scope to be in
     /// and nothing to switch to.
     var targetChipEnabled: Bool {
-        !isLocked && !capturing && hasSelection
+        screen == .smartEdit && !isLocked && !capturing && hasSelection
     }
 
     /// Hand keyboard focus to the selected action, or to Custom's field.
@@ -296,9 +356,11 @@ final class PanelModel {
     }
 
     var primaryFocusCell: Cell {
+        if screen == .menu { return .action(2) }
+        if screen == .snippets { return snippets.isEmpty ? .back : .action(0) }
         switch actionChoice {
         case .preset(let preset):
-            return .action(PanelPreset.all.firstIndex(of: preset) ?? 0)
+            return .action(presets.firstIndex(of: preset) ?? 0)
         case .custom:
             return .direction
         }
@@ -307,9 +369,10 @@ final class PanelModel {
     /// The one cell still enabled while a request runs — the active action,
     /// which becomes a Cancel control rather than disappearing.
     private var runningFocusCell: Cell {
+        if screen != .smartEdit { return .run }
         switch actionChoice {
         case .preset(let preset):
-            return .action(PanelPreset.all.firstIndex(of: preset) ?? 0)
+            return .action(presets.firstIndex(of: preset) ?? 0)
         case .custom:
             return .run
         }
@@ -364,9 +427,11 @@ final class PanelModel {
     /// The command row's own cells, regardless of phase: the four built-ins
     /// and Custom, or Direction and its inline Run once Custom is disclosed.
     private var commandRowCells: [Cell] {
+        if screen == .menu { return [.action(0), .action(1), .action(2)] }
+        if screen == .snippets { return [.back] + snippets.indices.map { .action($0) } }
         var cells: [Cell] = []
         for index in actionDisplayOrder {
-            if index == Self.customActionIndex, isCustomInstructionSelected {
+            if index == customActionIndex, isCustomInstructionSelected {
                 cells.append(.direction)
             } else {
                 cells.append(.action(index))
@@ -374,22 +439,23 @@ final class PanelModel {
         }
         if isCustomInstructionSelected { cells.append(.run) }
         if targetChipEnabled { cells.append(.target) }
+        cells.append(.back)
         return cells
     }
 
     /// Four built-ins then Custom, in the same order in every state.
     var actionDisplayOrder: [Int] {
-        Self.actionIndices
+        actionIndices
     }
 
     func actionTitle(at index: Int) -> String? {
-        if PanelPreset.all.indices.contains(index) { return PanelPreset.all[index].title }
-        return index == Self.customActionIndex ? "Custom" : nil
+        if presets.indices.contains(index) { return presets[index].title }
+        return index == customActionIndex ? "Custom" : nil
     }
 
     func actionSymbol(at index: Int) -> String? {
-        if PanelPreset.all.indices.contains(index) { return PanelPreset.all[index].action.symbol }
-        return index == Self.customActionIndex ? EditAction.custom("").symbol : nil
+        if presets.indices.contains(index) { return presets[index].symbol }
+        return index == customActionIndex ? EditAction.custom("").symbol : nil
     }
 
     /// The label shown on an action control in its current phase.
@@ -401,10 +467,10 @@ final class PanelModel {
 
     /// Reserved beside the idle label so status changes never resize the strip.
     func actionProgressLabel(at index: Int) -> String? {
-        if PanelPreset.all.indices.contains(index) {
-            return PanelPreset.all[index].action.progressLabel
+        if presets.indices.contains(index) {
+            return presets[index].progressLabel
         }
-        return index == Self.customActionIndex ? EditAction.custom("").progressLabel : nil
+        return index == customActionIndex ? EditAction.custom("").progressLabel : nil
     }
 
     /// The truthful label for the control actively running, at `index` or for
@@ -424,9 +490,9 @@ final class PanelModel {
     func isActionSelected(at index: Int) -> Bool {
         switch actionChoice {
         case .preset(let selected):
-            return PanelPreset.all.indices.contains(index) && PanelPreset.all[index] == selected
+            return presets.indices.contains(index) && presets[index] == selected
         case .custom:
-            return index == Self.customActionIndex
+            return index == customActionIndex
         }
     }
 
@@ -441,18 +507,31 @@ final class PanelModel {
         return false
     }
 
-    var canRunPrimary: Bool { !isCustomInstructionSelected || hasCustomInstruction }
+    var canRunPrimary: Bool {
+        switch screen {
+        case .menu: return true
+        case .snippets:
+            guard case .action(let index) = focusedCell else { return false }
+            return snippets.indices.contains(index)
+        case .smartEdit: return !isCustomInstructionSelected || hasCustomInstruction
+        }
+    }
+
+    var requestOverrides: LLMRequestOverrides? {
+        guard case .preset(let preset) = actionChoice else { return nil }
+        return preset.requestOverrides
+    }
 
     /// Custom is the only state that expands the ribbon. Every other phase uses
     /// one stable width so starting or finishing a request never moves the UI.
     var prefersExpandedRibbon: Bool {
-        isCustomInstructionSelected
+        screen == .smartEdit && isCustomInstructionSelected
     }
 
     /// The visible keyboard hint for an action. Keeping this beside the action
     /// catalog guarantees hover labels and actual key routing stay in lockstep.
     func actionShortcut(at index: Int) -> String? {
-        Self.actionIndices.contains(index) ? "\(index + 1)" : nil
+        actionIndices.contains(index) ? "\(index + 1)" : nil
     }
 
     /// A concise, one-line description of what an action does, for its hover
@@ -460,8 +539,8 @@ final class PanelModel {
     /// these mirror the wording `PanelPreset` and `EditAction` already
     /// document, so a tooltip and the action's real behavior cannot drift.
     func actionDescription(at index: Int) -> String? {
-        if PanelPreset.all.indices.contains(index) {
-            switch PanelPreset.all[index].action {
+        if presets.indices.contains(index) {
+            switch presets[index].action {
             case .improve: return "General proofread and rewrite"
             case .sharpen: return "Restructure text written for a coding agent"
             case .planFirst: return "Ask for a short plan with goals and verifiers"
@@ -469,12 +548,12 @@ final class PanelModel {
             default: return nil
             }
         }
-        return index == Self.customActionIndex ? "Describe your own edit" : nil
+        return index == customActionIndex ? "Describe your own edit" : nil
     }
 
     var customSubmitTitle: String {
         guard phase == .running else { return "Run" }
-        return runningStatus(at: Self.customActionIndex)
+        return runningStatus(at: customActionIndex)
     }
 
     /// Copies the current failure text to the system pasteboard. Self-contained
@@ -518,6 +597,14 @@ final class PanelModel {
     /// deliberately inert rather than silently falling back to Improve.
     func runPrimary() {
         guard !isLocked else { return }
+        if screen == .menu {
+            showSmartEdit()
+            return
+        }
+        if screen == .snippets {
+            if case .action(let index) = focusedCell { activateNumberedButton(at: index) }
+            return
+        }
         switch actionChoice {
         case .preset(let preset):
             onPerform?(preset.action, nil)

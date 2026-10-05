@@ -195,6 +195,7 @@ struct SwooshBorder<S: InsettableShape>: View {
         }
     }
 }
+
 // MARK: - Focus ring
 
 extension View {

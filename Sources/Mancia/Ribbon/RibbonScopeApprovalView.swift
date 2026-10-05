@@ -20,7 +20,9 @@ struct RibbonScopeApprovalView: View {
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(RibbonPalette.text)
                 Text(
-                    "Mancia will read the entire document and send it to Copilot. "
+                    model.pendingScopeApprovalIsLocal
+                        ? "Mancia will read the entire document to fix its keyboard layout locally."
+                        : "Mancia will read the entire document and send it to Copilot. "
                         + "Its contents may leave this Mac."
                 )
                 .font(.system(size: 11.5, weight: .medium))
@@ -37,14 +39,16 @@ struct RibbonScopeApprovalView: View {
                 .ribbonFocusRing(model.focusedCell == .scopeDecline, radius: 8, inset: -2)
                 .accessibilityIdentifier("DeclineScope")
                 AccentButton(
-                    "Send document", fill: RibbonPalette.action, foreground: RibbonPalette.onAction
+                    model.pendingScopeApprovalIsLocal ? "Read document" : "Send document",
+                    fill: RibbonPalette.action, foreground: RibbonPalette.onAction
                 ) {
                     model.onApproveDocumentGeneration?()
                 }
                 .focusable()
                 .focused(focus, equals: .scopeApprove)
                 .ribbonFocusRing(model.focusedCell == .scopeApprove, radius: 8, inset: -2)
-                .accessibilityLabel("Send whole document to Copilot")
+                .accessibilityLabel(model.pendingScopeApprovalIsLocal
+                    ? "Read whole document locally" : "Send whole document to Copilot")
                 .accessibilityIdentifier("ApproveScope")
             }
             .frame(height: 30)

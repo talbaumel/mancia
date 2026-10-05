@@ -64,8 +64,12 @@ struct RibbonView: View {
 
     private var ribbonSurface: some View {
         VStack(alignment: .leading, spacing: 0) {
-            targetRow
-            commandRow
+            if model.screen == .smartEdit {
+                targetRow
+                commandRow
+            } else {
+                menuRow
+            }
             statusStrip
             if model.phase == .scopeApproval {
                 hairline
@@ -110,6 +114,9 @@ struct RibbonView: View {
             adopt(model.focusedCell)
         }
         .onChange(of: model.capturing) { relayout() }
+        .onChange(of: model.screen) { relayout() }
+        .onChange(of: model.snippets) { relayout() }
+        .onChange(of: model.snippetError) { relayout() }
         // The Direction field wraps to four lines, so what the user types is a
         // height input like any other.
         .onChange(of: model.instruction) { relayout() }
@@ -133,7 +140,8 @@ struct RibbonView: View {
             UnevenRoundedRectangle(
                 topLeadingRadius: 0, bottomLeadingRadius: 20,
                 bottomTrailingRadius: 20, topTrailingRadius: 0, style: .continuous)
-        case .hostWindow, .belowSelection, .aboveSelection, .leftOfSelection, .rightOfSelection:
+        case .hostWindow, .belowSelection, .aboveSelection, .belowPointer, .abovePointer,
+             .leftOfSelection, .rightOfSelection:
             UnevenRoundedRectangle(
                 topLeadingRadius: 20, bottomLeadingRadius: 20,
                 bottomTrailingRadius: 20, topTrailingRadius: 20, style: .continuous)
@@ -157,6 +165,7 @@ struct RibbonView: View {
         HStack(spacing: 0) {
             targetChip
             Spacer(minLength: 0)
+            backButton
             if model.phase == .running {
                 Text(runningLabel)
                     .font(.system(size: 11.5))
@@ -251,12 +260,102 @@ struct RibbonView: View {
 
     // MARK: - Cells
 
+    private var backButton: some View {
+        Button { model.showMenu() } label: {
+            Image(systemName: "chevron.left")
+                .frame(width: controlHeight, height: controlHeight)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusable()
+        .focused($focus, equals: .back)
+        .ribbonFocusRing(model.focusedCell == .back, radius: 8, inset: 0)
+        .disabled(locked)
+        .help("Back to menu")
+        .accessibilityLabel("Back to menu")
+        .accessibilityIdentifier("Menu-back")
+    }
+
+    private var menuRow: some View {
+        HStack(spacing: 8) {
+            if model.screen == .snippets { backButton }
+            if model.phase == .running {
+                Text(model.runningTitle)
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer(minLength: 0)
+                Button { model.onCancelRun?() } label: {
+                    Image(systemName: "xmark")
+                        .frame(width: controlHeight, height: controlHeight)
+                }
+                .buttonStyle(.plain)
+                .focusable()
+                .focused($focus, equals: .run)
+                .ribbonFocusRing(model.focusedCell == .run, radius: 8, inset: 0)
+                .help("Cancel")
+                .accessibilityLabel("Cancel")
+            } else if model.screen == .menu {
+                Spacer(minLength: 0)
+                menuButton("Oops", symbol: "arrow.left.arrow.right", index: 0)
+                menuButton("Snippets", symbol: "text.badge.plus", index: 1)
+                menuButton("Smart Edit", symbol: "wand.and.stars", index: 2)
+                Spacer(minLength: 0)
+            } else if let error = model.snippetError {
+                Text(error).font(.system(size: 12)).foregroundStyle(RibbonPalette.caption)
+            } else if model.snippets.isEmpty {
+                Text("No snippets").font(.system(size: 12)).foregroundStyle(RibbonPalette.caption)
+            } else {
+                ScrollView(.horizontal) {
+                    HStack(spacing: 8) {
+                        ForEach(Array(model.snippets.enumerated()), id: \.offset) { index, snippet in
+                            menuButton(snippet.title, index: index)
+                        }
+                    }
+                    .padding(3)
+                }
+                .frame(height: controlHeight + 12)
+            }
+        }
+        .padding(8)
+        .frame(minHeight: rowHeight)
+    }
+
+    private func menuButton(
+        _ title: String,
+        symbol: String? = nil,
+        index: Int
+    ) -> some View {
+        Button { model.activateNumberedButton(at: index) } label: {
+            Group {
+                if let symbol {
+                    Label(title, systemImage: symbol)
+                } else {
+                    Text(title)
+                }
+            }
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(RibbonPalette.text)
+            .lineLimit(1)
+            .padding(.horizontal, 12)
+            .frame(height: controlHeight)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(controlShape.fill(RibbonPalette.controlTint))
+        .overlay(controlShape.strokeBorder(RibbonPalette.controlEdge, lineWidth: 1))
+        .focusable()
+        .focused($focus, equals: .action(index))
+        .ribbonFocusRing(model.focusedCell == .action(index), radius: 8, inset: 0)
+        .disabled(locked)
+        .help(index < 9 ? "\(title) (⌘\(index + 1))" : title)
+        .accessibilityIdentifier("\(model.screen == .menu ? "Menu" : "Snippet")-\(index + 1)")
+    }
+
     /// The four built-ins keep fixed positions. Direction replaces Custom's
     /// trailing slot and absorbs the room added by the expanded ribbon.
     private var actionStrip: some View {
         HStack(spacing: 8) {
             ForEach(model.actionDisplayOrder, id: \.self) { index in
-                if index == PanelModel.customActionIndex,
+                if index == model.customActionIndex,
                    model.isCustomInstructionSelected
                 {
                     directionCell
@@ -348,7 +447,7 @@ struct RibbonView: View {
         .accessibilityValue(processing ? "In progress" : selected ? "Selected" : "Not selected")
         .accessibilityHint(processing
             ? "Click to cancel."
-            : index == PanelModel.customActionIndex
+            : index == model.customActionIndex
                 ? "\(index + 1) when not typing. Opens the custom instruction field."
                 : "\(index + 1) when not typing. Runs immediately.")
         .accessibilityIdentifier("Action-\(index + 1)")

@@ -32,11 +32,16 @@ final class EditCoordinator {
     private struct PendingAction {
         let action: EditAction
         let note: String?
+        let requestOverrides: LLMRequestOverrides?
+        var isOops = false
+
+        var title: String { isOops ? "Oops" : action.title }
     }
 
     private struct PendingApply {
         let target: SelectionTargetEvidence
         let actionName: String
+        var inputLanguage: KeyboardLayoutConverter.Language? = nil
     }
 
     private let provider: LLMProvider
@@ -57,6 +62,7 @@ final class EditCoordinator {
     private var currentTask: Task<Void, Never>?
     private var autoCloseTask: Task<Void, Never>?
     private var queuedAction: PendingAction?
+    private var queuedSnippet: TextSnippet?
     private var pendingDocumentAction: PendingAction?
     private var pendingApply: PendingApply?
     private var capturing = false
@@ -76,8 +82,11 @@ final class EditCoordinator {
 
     private func wire() {
         model.onPerform = { [weak self] action, note in
-            self?.perform(action, note: note)
+            guard let self else { return }
+            self.perform(action, note: note, requestOverrides: self.model.requestOverrides)
         }
+        model.onOops = { [weak self] in self?.perform(.improve, note: nil, isOops: true) }
+        model.onSnippet = { [weak self] snippet in self?.performSnippet(snippet) }
         model.onScopeChange = { [weak self] scope in
             self?.scopeChanged(scope)
         }
@@ -109,6 +118,14 @@ final class EditCoordinator {
         navigating = false
         capturing = true
         model.reset(hasSelection: true, charCount: 0)
+        reloadPrompts()
+        do {
+            model.snippets = try SnippetStore.loadOrCreate()
+            model.snippetError = nil
+        } catch {
+            model.snippets = []
+            model.snippetError = error.localizedDescription
+        }
         model.capturing = true
         ribbon.show()
         ribbon.focus()
@@ -128,6 +145,16 @@ final class EditCoordinator {
                 model.capturing = false
                 fail(error.localizedDescription)
             }
+        }
+    }
+
+    private func reloadPrompts() {
+        do {
+            model.setPresets(try PromptStore.loadOrCreate())
+            model.promptError = nil
+        } catch {
+            model.setPresets(PanelPreset.all)
+            model.promptError = error.localizedDescription
         }
     }
 
@@ -156,18 +183,79 @@ final class EditCoordinator {
         }
         syncIterationState()
 
-        if let queuedAction {
+        if let queuedSnippet {
+            self.queuedSnippet = nil
+            performSnippet(queuedSnippet)
+        } else if let queuedAction {
             self.queuedAction = nil
-            perform(queuedAction.action, note: queuedAction.note)
+            perform(
+                queuedAction.action,
+                note: queuedAction.note,
+                requestOverrides: queuedAction.requestOverrides,
+                isOops: queuedAction.isOops)
+        }
+    }
+
+    private func performSnippet(_ snippet: TextSnippet) {
+        if capturing {
+            queuedAction = nil
+            queuedSnippet = snippet
+            model.runningTitle = "Pasting snippet"
+            model.phase = .running
+            return
+        }
+        autoCloseTask?.cancel()
+        autoCloseTask = nil
+        model.runningTitle = "Pasting snippet"
+        model.phase = .running
+        startOperation { [self] operation in
+            do {
+                guard let capture else { throw CoordinatorError.uncertainTarget }
+                let refreshed = try await SelectionCapture.captureFreshSelection(from: capture)
+                try Task.checkCancellation()
+                guard isCurrent(operation) else { return }
+                guard let target = refreshed.snippetTarget else {
+                    retain(output: snippet.value, reason: "Mancia could not verify where to paste the snippet.")
+                    return
+                }
+                let outcome = await SelectionCapture.apply(text: snippet.value, replacing: target)
+                guard isCurrent(operation) else { return }
+                switch outcome {
+                case .applied:
+                    cancel()
+                case .retained(let reason):
+                    retain(output: snippet.value, reason: reason.localizedDescription)
+                case .failure(let failure):
+                    retain(output: snippet.value, reason: failure.localizedDescription)
+                case .cancelled:
+                    restoreRestingPhase()
+                }
+            } catch is CancellationError {
+                guard isCurrent(operation) else { return }
+                restoreRestingPhase()
+            } catch {
+                guard isCurrent(operation) else { return }
+                retain(output: snippet.value, reason: error.localizedDescription)
+            }
         }
     }
 
     // MARK: - Generation
 
-    private func perform(_ action: EditAction, note: String?) {
+    private func perform(
+        _ action: EditAction,
+        note: String?,
+        requestOverrides: LLMRequestOverrides? = nil,
+        isOops: Bool = false
+    ) {
         if capturing {
-            queuedAction = PendingAction(action: action, note: note)
-            model.runningTitle = action.progressLabel
+            queuedSnippet = nil
+            queuedAction = PendingAction(
+                action: action,
+                note: note,
+                requestOverrides: requestOverrides,
+                isOops: isOops)
+            model.runningTitle = isOops ? "Fixing keyboard layout" : action.progressLabel
             model.phase = .running
             return
         }
@@ -183,7 +271,11 @@ final class EditCoordinator {
             _ = session.cancel(at: cancellationBoundary(for: session.stage))
         }
         session.setScope(sessionScope)
-        let pending = PendingAction(action: action, note: note)
+        let pending = PendingAction(
+            action: action,
+            note: note,
+            requestOverrides: requestOverrides,
+            isOops: isOops)
         model.runningTitle = sessionScope == .selection ? "Reading selection" : action.progressLabel
         model.phase = .running
         ribbon.focus()
@@ -266,7 +358,8 @@ final class EditCoordinator {
         switch decision {
         case .requestDocumentApproval:
             pendingDocumentAction = pending
-            model.pendingScopeApprovalActionTitle = pending.action.title
+            model.pendingScopeApprovalActionTitle = pending.title
+            model.pendingScopeApprovalIsLocal = pending.isOops
             model.phase = .scopeApproval
             ribbon.focus()
         case .captureDocument:
@@ -347,27 +440,39 @@ final class EditCoordinator {
         operation: UInt64
     ) async {
         guard isCurrent(operation) else { return }
-        model.runningTitle = pending.action.progressLabel
+        model.runningTitle = pending.isOops ? "Fixing keyboard layout" : pending.action.progressLabel
         model.phase = .running
         ribbon.focus()
 
         do {
-            try PromptGuard.validate(
-                action: pending.action,
-                text: request.text,
-                note: pending.note)
-            let prompt = PromptBuilder.build(
-                action: pending.action,
-                text: request.text,
-                note: pending.note)
-            let rawOutput = try await provider.complete(prompt)
+            let output: String
+            let inputLanguage: KeyboardLayoutConverter.Language?
+            if pending.isOops {
+                let conversion = KeyboardLayoutConverter.conversion(of: request.text)
+                output = conversion.text
+                inputLanguage = conversion.language
+            } else {
+                try PromptGuard.validate(
+                    action: pending.action,
+                    text: request.text,
+                    note: pending.note)
+                let prompt = PromptBuilder.build(
+                    action: pending.action,
+                    text: request.text,
+                    note: pending.note)
+                let rawOutput = try await provider.complete(
+                    prompt, overrides: pending.requestOverrides)
+                try Task.checkCancellation()
+                guard isCurrent(operation) else { return }
+                output = try PromptBuilder.normalizeOutput(
+                    action: pending.action,
+                    source: request.text,
+                    output: rawOutput,
+                    preserveSourceBoundaryWhitespace: request.baseline.scope == .selection)
+                inputLanguage = nil
+            }
             try Task.checkCancellation()
             guard isCurrent(operation) else { return }
-            let output = try PromptBuilder.normalizeOutput(
-                action: pending.action,
-                source: request.text,
-                output: rawOutput,
-                preserveSourceBoundaryWhitespace: request.baseline.scope == .selection)
             let result = EditSession.GeneratedResult(output: output, for: request)
             switch session.consider(
                 result,
@@ -377,6 +482,11 @@ final class EditCoordinator {
                         userOptedIn: settings.confirmWholeDocumentReplace)
             ) {
             case .retained:
+                if let inputLanguage {
+                    KeyboardInputSource.select(language: inputLanguage)
+                    cancel()
+                    return
+                }
                 syncIterationState()
                 model.appliedStatusText = "No changes needed"
                 model.restoreButtonsAfterApply()
@@ -386,14 +496,16 @@ final class EditCoordinator {
             case .requestReplacementApproval(let result):
                 pendingApply = PendingApply(
                     target: target,
-                    actionName: pending.action.title)
+                    actionName: pending.title,
+                    inputLanguage: inputLanguage)
                 presentReplacementConfirmation(result)
             case .apply(let plan):
                 await executeApply(
                     plan,
                     target: target,
-                    actionName: pending.action.title,
-                    operation: operation)
+                    actionName: pending.title,
+                    operation: operation,
+                    inputLanguage: inputLanguage)
             case .failure(let failure):
                 fail(message(for: failure))
             }
@@ -440,7 +552,8 @@ final class EditCoordinator {
                 plan,
                 target: pendingApply.target,
                 actionName: pendingApply.actionName,
-                operation: operation)
+                operation: operation,
+                inputLanguage: pendingApply.inputLanguage)
         }
     }
 
@@ -448,7 +561,8 @@ final class EditCoordinator {
         _ plan: EditSession.ApplyPlan,
         target: SelectionTargetEvidence,
         actionName: String,
-        operation: UInt64
+        operation: UInt64,
+        inputLanguage: KeyboardLayoutConverter.Language? = nil
     ) async {
         guard isCurrent(operation) else { return }
         model.runningTitle = "Applying"
@@ -474,6 +588,11 @@ final class EditCoordinator {
             capture = SelectionCaptureResult(
                 outcome: .selected(plan.result.output),
                 target: appliedTarget)
+            if let inputLanguage {
+                KeyboardInputSource.select(language: inputLanguage)
+                cancel()
+                return
+            }
             dodgeAppliedText()
             finishApplied(actionName: actionName)
         case .retained(let reason):
@@ -675,6 +794,7 @@ final class EditCoordinator {
         }
         if capturing {
             queuedAction = nil
+            queuedSnippet = nil
             model.phase = .idle
             ribbon.focus()
             return
@@ -710,6 +830,7 @@ final class EditCoordinator {
 
     private func clearPending() {
         queuedAction = nil
+        queuedSnippet = nil
         pendingDocumentAction = nil
         pendingApply = nil
         model.pendingScopeApprovalActionTitle = ""
@@ -932,7 +1053,8 @@ final class EditCoordinator {
 
     private func warmProvider() {
         guard let provider = provider as? WarmableLLMProvider else { return }
-        Task { await provider.prepareForPanel() }
+        let overrides = model.presets.compactMap(\.requestOverrides)
+        Task { await provider.prepareForPanel(overrides: overrides) }
     }
 
     private func warmProviderAfterClose() {

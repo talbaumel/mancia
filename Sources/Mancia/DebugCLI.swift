@@ -307,6 +307,43 @@ enum DebugCLI {
             }
         }
 
+        model.reset(hasSelection: true, charCount: 42)
+        model.snippets = [TextSnippet(title: "Signature", value: "Regards")]
+        var corrections = 0
+        var pasted: [TextSnippet] = []
+        model.onOops = { corrections += 1 }
+        model.onSnippet = { pasted.append($0) }
+
+        func clickControl(_ identifier: String) async {
+            resize(panel: panel, hosting: hosting, model: model)
+            await settle()
+            await checkBounds(identifier)
+            guard let element = axElement(id: identifier, in: axWindow),
+                  let frame = await windowFrame(of: element, panel: panel)
+            else {
+                failures.append("menu: missing control \(identifier)")
+                return
+            }
+            click(panel, at: frame.center)
+            await settle()
+        }
+
+        await clickControl("Menu-1")
+        if corrections != 1 { failures.append("menu: Oops did not dispatch") }
+        await clickControl("Menu-2")
+        if model.screen != .snippets { failures.append("menu: Snippets did not open") }
+        await clickControl("Snippet-1")
+        if pasted != model.snippets { failures.append("menu: snippet did not dispatch") }
+        await clickControl("Menu-back")
+        if model.screen != .menu { failures.append("snippets: Back did not open menu") }
+        await clickControl("Menu-3")
+        if model.screen != .smartEdit { failures.append("menu: Smart Edit did not open") }
+        await clickControl("Menu-back")
+        if model.screen != .menu { failures.append("smart edit: Back did not open menu") }
+        if !ran.isEmpty { failures.append("menu: navigation unexpectedly ran an edit") }
+        await clickControl("Menu-3")
+        log.append("menu: checked Oops, Snippets, snippet insertion callback, Smart Edit, and Back")
+
         // MARK: idle
 
         resize(panel: panel, hosting: hosting, model: model)
@@ -402,6 +439,7 @@ enum DebugCLI {
         // MARK: approval (whole-document scope gate)
 
         model.reset(hasSelection: true, charCount: 42)
+        model.showSmartEdit()
         model.phase = .scopeApproval
         model.pendingScopeApprovalActionTitle = "Improve"
         resize(panel: panel, hosting: hosting, model: model)
@@ -452,6 +490,7 @@ enum DebugCLI {
         // MARK: confirm (replace-whole-document review)
 
         model.reset(hasSelection: false, charCount: 0)
+        model.showSmartEdit()
         model.phase = .confirm
         model.pendingOriginalCharCount = 240
         model.pendingResultCharCount = 180
@@ -500,6 +539,7 @@ enum DebugCLI {
         // MARK: retained (a result Mancia refused to paste)
 
         model.reset(hasSelection: true, charCount: 42)
+        model.showSmartEdit()
         model.phase = .retained
         model.retainedResult = "The result the paste guard held back."
         model.retainedReason = "The frontmost app changed before the edit could land."
@@ -543,6 +583,7 @@ enum DebugCLI {
         // MARK: error
 
         model.reset(hasSelection: true, charCount: 42)
+        model.showSmartEdit()
         model.phase = .error
         model.errorText = "Simulated failure for the click check."
         resize(panel: panel, hosting: hosting, model: model)
@@ -579,6 +620,7 @@ enum DebugCLI {
         // MARK: applied
 
         model.reset(hasSelection: true, charCount: 42)
+        model.showSmartEdit()
         model.phase = .applied
         model.appliedActionName = "Improve"
         model.undoAvailable = true
@@ -607,7 +649,11 @@ enum DebugCLI {
 
         // Exercise unmodified digits through the native event routes.
         model.reset(hasSelection: true, charCount: 42)
-        panel.onActivateAction = { model.activateAction(at: $0) }
+        model.showSmartEdit()
+        panel.onActivateAction = { model.activateNumberedButton(at: $0) }
+        resize(panel: panel, hosting: hosting, model: model)
+        panel.makeKeyAndOrderFront(nil)
+        await settle()
         let digitEvents = zip(["1", "2", "3", "4", "5"], [18, 19, 20, 21, 23]).compactMap {
             NSEvent.keyEvent(
                 with: .keyDown, location: .zero, modifierFlags: [],
@@ -620,8 +666,44 @@ enum DebugCLI {
         for event in digitEvents { panel.sendEvent(event) }
         if ran.map(\.action.title) != ["Improve", "Sharpen", "Plan first", "Tighten"]
             || !model.isCustomInstructionSelected {
-            failures.append("shortcuts: digits did not run presets and open Custom")
+            failures.append("shortcuts: digits dispatched \(ran.map(\.action.title)); "
+                + "Custom=\(model.isCustomInstructionSelected), key=\(panel.isKeyWindow)")
         }
+
+        model.reset(hasSelection: true, charCount: 42)
+        model.snippets = (1...9).map { TextSnippet(title: "Entry \($0)", value: "Value \($0)") }
+        resize(panel: panel, hosting: hosting, model: model)
+        await settle()
+        panel.makeFirstResponder(nil)
+        let commandDigitEvents = zip(
+            ["1", "2", "3", "4", "5", "6", "7", "8", "9"],
+            [18, 19, 20, 21, 23, 22, 26, 28, 25]
+        ).compactMap {
+            NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: .command,
+                timestamp: 0, windowNumber: panel.windowNumber, context: nil,
+                characters: $0.0, charactersIgnoringModifiers: $0.0,
+                isARepeat: false, keyCode: UInt16($0.1))
+        }
+        corrections = 0
+        pasted.removeAll()
+        ran.removeAll()
+        if commandDigitEvents.count == 9 {
+            panel.sendEvent(commandDigitEvents[0])
+            if corrections != 1 { failures.append("shortcuts: Command-1 did not run Oops") }
+            _ = panel.performKeyEquivalent(with: commandDigitEvents[1])
+            if model.screen != .snippets { failures.append("shortcuts: Command-2 did not open Snippets") }
+            for event in commandDigitEvents { _ = panel.performKeyEquivalent(with: event) }
+            if pasted != model.snippets { failures.append("shortcuts: Command-1 through 9 did not select snippets") }
+            model.showMenu()
+            _ = panel.performKeyEquivalent(with: commandDigitEvents[2])
+            if model.screen != .smartEdit || !ran.isEmpty {
+                failures.append("shortcuts: Command-3 should open Smart Edit without running an edit")
+            }
+        } else {
+            failures.append("shortcuts: could not construct Command-number events")
+        }
+        log.append("shortcuts: Command-1 Oops, Command-2 Snippets, Command-3 Smart Edit, and nine snippet shortcuts")
 
         let editor = NSTextView(frame: hosting.bounds)
         panel.contentView = editor
@@ -637,9 +719,14 @@ enum DebugCLI {
         if editor.string != "12345" || !ran.isEmpty {
             failures.append("shortcuts: digits must type normally in the editor")
         }
+        for event in commandDigitEvents {
+            if panel.performKeyEquivalent(with: event) {
+                failures.append("shortcuts: a Command-number was claimed while editing text")
+            }
+        }
         panel.makeFirstResponder(nil)
         panel.orderOut(nil)
-        for event in digitEvents {
+        for event in digitEvents + commandDigitEvents {
             if panel.performKeyEquivalent(with: event) {
                 failures.append("shortcuts: an unfocused panel claimed a digit")
             }

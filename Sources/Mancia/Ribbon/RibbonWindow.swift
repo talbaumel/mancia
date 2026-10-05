@@ -29,6 +29,7 @@ final class RibbonWindow: NSObject {
     /// target app briefly owns focus again: a fresh selection captured for a
     /// new cycle, and a landed paste the lane was found covering.
     private var selectionRect: CGRect?
+    private var pointerLocation: CGPoint?
     /// The edge the lane currently hangs from, which decides both the side it
     /// slides in from and — fed back through `Context` — where it stays for
     /// the rest of the session. Cleared by `show()`.
@@ -76,6 +77,7 @@ final class RibbonWindow: NSObject {
         presentationSeq &+= 1
         let panel = panel ?? makePanel()
         self.panel = panel
+        pointerLocation = NSEvent.mouseLocation
         hostWindow = HostWindowProbe.frontmostWindow()
         selectionRect = SelectionCapture.selectionScreenRect()
         currentAnchor = nil
@@ -285,7 +287,7 @@ final class RibbonWindow: NSObject {
     private func content(width: CGFloat, anchor: RibbonPlacement.Anchor) -> RibbonView {
         RibbonView(
             model: model, width: width, anchor: anchor,
-            swooshColor: Color(nsColor: settings.swooshColor),
+            swooshColor: Color(nsColor: settings.resolvedSwooshColor(session: model.sessionSeq)),
             // Deferred a turn on purpose: the callback fires from inside
             // SwiftUI's update, and measuring before that update has settled
             // reports the height the lane is leaving, not the one it wants.
@@ -301,7 +303,8 @@ final class RibbonWindow: NSObject {
     ) -> RibbonView {
         RibbonView(
             model: model, width: width, anchor: anchor,
-            swooshColor: Color(nsColor: settings.swooshColor), isLive: false)
+            swooshColor: Color(nsColor: settings.resolvedSwooshColor(session: model.sessionSeq)),
+            isLive: false)
     }
 
     private func currentContext() -> RibbonPlacement.Context {
@@ -309,6 +312,12 @@ final class RibbonWindow: NSObject {
             return .init(screenFrame: .zero, visibleFrame: .zero)
         }
         let expanded = model.prefersExpandedRibbon
+        let preferredWidth = RibbonPlacement.contentWidth(
+            screen: model.screen,
+            presets: model.presets,
+            snippetTitles: model.snippets.map(\.title),
+            snippetError: model.snippetError,
+            customExpanded: expanded)
         return .init(
             screenFrame: screen.frame,
             visibleFrame: screen.visibleFrame,
@@ -316,13 +325,12 @@ final class RibbonWindow: NSObject {
             safeAreaTop: screen.safeAreaInsets.top,
             menuBarHidden: menuBarHidden,
             selectionRect: selectionRect,
+            pointerLocation: pointerLocation,
             establishedAnchor: currentAnchor,
-            preferredWidth: expanded
-                ? RibbonPlacement.expandedWidth
-                : RibbonPlacement.standardWidth,
+            preferredWidth: preferredWidth,
             minimumContentWidth: expanded
                 ? RibbonPlacement.customMinimumWidth
-                : RibbonPlacement.minimumWidth
+                : preferredWidth
         )
     }
 
@@ -347,6 +355,10 @@ final class RibbonWindow: NSObject {
     /// pointer only when neither did, since it is wherever the hand left it
     /// rather than where the words are.
     private func targetScreen() -> NSScreen? {
+        if let pointerLocation,
+           let screen = NSScreen.screens.first(where: { $0.frame.contains(pointerLocation) }) {
+            return screen
+        }
         if let screen = screenOverlapping(selectionRect) { return screen }
         if let screen = screenOverlapping(hostWindow?.frame) { return screen }
         let mouse = NSEvent.mouseLocation
@@ -473,7 +485,7 @@ final class RibbonWindow: NSObject {
             return false
         }
         panel.onToggleTarget = { [weak self] in self?.model.toggleScope() }
-        panel.onActivateAction = { [weak self] index in self?.model.activateAction(at: index) }
+        panel.onActivateAction = { [weak self] index in self?.model.activateNumberedButton(at: index) }
         panel.onUndoVersion = { [weak self] in self?.model.undoLastVersion() ?? false }
         panel.onOpenSettings = { [weak self] in self?.onOpenSettings?() }
         panel.onSubmit = { [weak self] in
@@ -498,11 +510,14 @@ final class RibbonWindow: NSObject {
         switch model.focusedCell {
         case .none:
             return false
+        case .back:
+            model.showMenu()
+            return true
         case .action(let index):
             if model.phase == .running, model.isActionSelected(at: index) {
                 model.onCancelRun?()
             } else {
-                model.activateAction(at: index)
+                model.activateNumberedButton(at: index)
             }
             return true
         case .run:

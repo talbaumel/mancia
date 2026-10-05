@@ -9,6 +9,110 @@ import Testing
 @Suite("Ribbon UI states")
 struct RibbonUITests {
 
+    @Test("Opening menu routes visible shortcuts without running Smart Edit")
+    func menuRoutesVisibleControls() {
+        let model = PanelModel()
+        var edits = 0
+        var corrections = 0
+        var pasted: [TextSnippet] = []
+        model.onPerform = { _, _ in edits += 1 }
+        model.onOops = { corrections += 1 }
+        model.onSnippet = { pasted.append($0) }
+        model.snippets = [TextSnippet(title: "Signature", value: "Regards")]
+        model.reset(hasSelection: true, charCount: 12)
+
+        #expect(model.screen == .menu)
+        #expect(model.focusableCells == [.action(0), .action(1), .action(2)])
+        model.activateNumberedButton(at: 0)
+        #expect(corrections == 1)
+        model.activateNumberedButton(at: 1)
+        #expect(model.screen == .snippets)
+        #expect(model.focusableCells == [.back, .action(0)])
+        model.activateNumberedButton(at: -1)
+        model.activateNumberedButton(at: 1)
+        #expect(pasted.isEmpty)
+        model.activateNumberedButton(at: 0)
+        #expect(pasted == model.snippets)
+        model.escape()
+        #expect(model.screen == .menu)
+        model.activateNumberedButton(at: 2)
+        #expect(model.screen == .smartEdit)
+        #expect(edits == 0)
+        model.activateNumberedButton(at: 0)
+        #expect(edits == 1)
+    }
+
+    @Test("Menu primary navigation ignores an empty Custom draft")
+    func menuPrimaryDoesNotRunHiddenCustom() {
+        let model = PanelModel()
+        var edits = 0
+        model.onPerform = { _, _ in edits += 1 }
+        model.selectCustomInstruction()
+        model.showMenu()
+        #expect(model.canRunPrimary)
+        model.runPrimary()
+        #expect(model.screen == .smartEdit)
+        #expect(edits == 0)
+        model.showSnippets()
+        #expect(model.focusedCell == .back)
+        #expect(!model.canRunPrimary)
+        model.escape()
+        #expect(model.screen == .menu)
+    }
+
+    @Test("Menu navigation and local actions respect approval and running locks",
+          arguments: [PanelModel.Phase.running, .scopeApproval, .confirm])
+    func lockedMenuIsInert(_ phase: PanelModel.Phase) {
+        let model = PanelModel()
+        model.reset(hasSelection: true, charCount: 12)
+        var corrections = 0
+        model.onOops = { corrections += 1 }
+        model.phase = phase
+        model.activateNumberedButton(at: 0)
+        model.activateNumberedButton(at: 1)
+        model.activateNumberedButton(at: 2)
+        model.showSmartEdit()
+        model.showSnippets()
+        model.runPrimary()
+        #expect(model.screen == .menu)
+        #expect(corrections == 0)
+        model.phase = .idle
+        model.showSnippets()
+        model.phase = phase
+        model.showMenu()
+        #expect(model.screen == .snippets)
+    }
+
+    @Test("Snippet insertion requires a captured caret and never targets a document")
+    func snippetInsertionTargetRequiresCaretEvidence() {
+        let app = NSRunningApplication.current
+        let element = AXUIElementCreateApplication(app.processIdentifier)
+        func captured(
+            scope: SelectionTargetEvidence.Scope = .selection,
+            range: CFRange? = CFRange(location: 3, length: 0),
+            fieldValue: String? = "abc",
+            focusedElement: AXUIElement? = element,
+            outcome: SelectionReadOutcome = .noSelection
+        ) -> SelectionCaptureResult {
+            SelectionCaptureResult(outcome: outcome, target: SelectionTargetEvidence(
+                pid: app.processIdentifier, capturedBaseline: nil,
+                capturedFieldValue: fieldValue, scope: scope,
+                targetApp: app, window: nil, focusedElement: focusedElement,
+                selectedRange: range))
+        }
+        let target = captured().snippetTarget
+        #expect(target?.capturedBaseline == "")
+        #expect(target?.scope == .selection)
+        #expect(target?.selectedRange?.location == 3)
+        #expect(target?.selectedRange?.length == 0)
+        #expect(captured(scope: .entireDocument).snippetTarget == nil)
+        #expect(captured(range: nil).snippetTarget == nil)
+        #expect(captured(range: CFRange(location: 0, length: 3)).snippetTarget == nil)
+        #expect(captured(fieldValue: nil).snippetTarget == nil)
+        #expect(captured(focusedElement: nil).snippetTarget == nil)
+        #expect(captured(outcome: .uncertain(.targetChanged)).snippetTarget == nil)
+    }
+
     // MARK: - Lock semantics
 
     @Test("Only scope-approval, running, and confirm lock the ribbon")
@@ -65,6 +169,7 @@ struct RibbonUITests {
     @Test("Esc closes the session from idle, applied, retained, and error alike")
     func escClosesFromRestingPhases() {
         let model = PanelModel()
+        model.showMenu()
         var cancels = 0
         model.onCancel = { cancels += 1 }
 
@@ -142,11 +247,13 @@ struct RibbonUITests {
         model.pendingResultPreview = "private result"
         model.appliedStatusText = "No changes needed"
         model.targetAppName = "Previous app"
+        model.pendingScopeApprovalIsLocal = true
         model.reset(hasSelection: false, charCount: 0)
         #expect(model.pendingOriginalPreview.isEmpty)
         #expect(model.pendingResultPreview.isEmpty)
         #expect(model.appliedStatusText == nil)
         #expect(model.targetAppName.isEmpty)
+        #expect(!model.pendingScopeApprovalIsLocal)
     }
 
     @Test("Retained offers Copy and Disclosure only when there is a result")
@@ -239,6 +346,41 @@ struct RibbonUITests {
         let resolution = RibbonPlacement.resolve(height: 80, in: context)
 
         #expect(resolution.frame.width == 740)
+    }
+
+    @Test("Ribbon width follows the visible content")
+    func ribbonWidthFollowsVisibleContent() {
+        let menu = RibbonPlacement.contentWidth(
+            screen: .menu,
+            presets: PanelPreset.all,
+            snippetTitles: [],
+            snippetError: nil,
+            customExpanded: false)
+        let snippets = RibbonPlacement.contentWidth(
+            screen: .snippets,
+            presets: PanelPreset.all,
+            snippetTitles: ["Short", "A much longer saved snippet"],
+            snippetError: nil,
+            customExpanded: false)
+        let smartEdit = RibbonPlacement.contentWidth(
+            screen: .smartEdit,
+            presets: PanelPreset.all,
+            snippetTitles: [],
+            snippetError: nil,
+            customExpanded: false)
+        let custom = RibbonPlacement.contentWidth(
+            screen: .smartEdit,
+            presets: PanelPreset.all,
+            snippetTitles: [],
+            snippetError: nil,
+            customExpanded: true)
+
+        #expect(menu == RibbonPlacement.compactWidth)
+        #expect(menu < RibbonPlacement.standardWidth)
+        #expect(snippets > menu)
+        #expect(smartEdit == RibbonPlacement.smartEditWidth(
+            presets: PanelPreset.all, customExpanded: false))
+        #expect(custom == RibbonPlacement.expandedWidth)
     }
 
     // MARK: - Rendering smoke test

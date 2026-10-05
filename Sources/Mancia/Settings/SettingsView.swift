@@ -60,6 +60,16 @@ struct SettingsView: View {
                     get: { settings.launchAtLogin },
                     set: { settings.launchAtLogin = $0 }
                 ))
+                Button {
+                    openSettingsFolder()
+                } label: {
+                    Label("Open settings folder", systemImage: "folder")
+                }
+                if let settingsFolderError {
+                    Text(settingsFolderError)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
             }
 
             Section {
@@ -199,25 +209,39 @@ struct SettingsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        HStack {
-            ColorPicker(
-                "Working color:",
-                selection: Binding(
-                    get: { Color(nsColor: settings.swooshColor) },
-                    set: { settings.swooshColor = NSColor($0) }
-                ),
-                supportsOpacity: false
-            )
-            Button {
-                settings.swooshColor = AppSettings.color(
-                    from: AppSettings.defaultSwooshColorHex)
-            } label: {
-                Image(systemName: "arrow.counterclockwise")
+        LabeledContent("Working color:") {
+            HStack(spacing: 8) {
+                Picker("", selection: $settings.swooshColorMode) {
+                    ForEach(SwooshColorMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(width: 140)
+
+                if settings.swooshColorMode == .fixed {
+                    ColorPicker(
+                        "Working color",
+                        selection: Binding(
+                            get: { Color(nsColor: settings.swooshColor) },
+                            set: { settings.swooshColor = NSColor($0) }
+                        ),
+                        supportsOpacity: false
+                    )
+                    .labelsHidden()
+                    Button {
+                        settings.swooshColor = AppSettings.color(
+                            from: AppSettings.defaultSwooshColorHex)
+                    } label: {
+                        Image(systemName: "arrow.counterclockwise")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(settings.swooshColorIsDefault)
+                    .help("Restore the default working color")
+                    .accessibilityLabel("Restore the default working color")
+                }
             }
-            .buttonStyle(.borderless)
-            .disabled(settings.swooshColorIsDefault)
-            .help("Restore the default working color")
-            .accessibilityLabel("Restore the default working color")
         }
     }
 
