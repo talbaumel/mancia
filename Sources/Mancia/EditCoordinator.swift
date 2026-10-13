@@ -73,6 +73,7 @@ final class EditCoordinator {
         ownPid: NSRunningApplication.current.processIdentifier)
 
     var onOpenSettings: (() -> Void)?
+    var canStartAutomatically: Bool { !sessionActive }
 
     init(provider: LLMProvider, settings: AppSettings) {
         self.provider = provider
@@ -105,6 +106,19 @@ final class EditCoordinator {
     }
 
     func start() {
+        start(capturedSelection: nil)
+    }
+
+    func startAutomatically(with selection: SelectionCaptureResult) {
+        guard canStartAutomatically, case .selected(let text) = selection.outcome,
+              !text.isEmpty, let target = selection.target,
+              target.pid != ProcessInfo.processInfo.processIdentifier,
+              target.scope == .selection, target.hasVerifiedRangeIdentity,
+              target.selectedRange?.length ?? 0 > 0 else { return }
+        start(capturedSelection: selection)
+    }
+
+    private func start(capturedSelection: SelectionCaptureResult?) {
         guard !sessionActive else {
             ribbon.focus()
             return
@@ -130,6 +144,11 @@ final class EditCoordinator {
         ribbon.show()
         ribbon.focus()
         warmProvider()
+
+        if let capturedSelection {
+            finishInitialCapture(capturedSelection)
+            return
+        }
 
         startOperation { [self] operation in
             do {

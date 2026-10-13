@@ -57,10 +57,14 @@ struct PasteboardOwnership: Equatable {
 
     static func claimCopiedSelection(
         expectedSelectedText: String?,
-        from pasteboard: NSPasteboard
+        from pasteboard: NSPasteboard,
+        isRichTextField: Bool = false
     ) -> PasteboardOwnership? {
         guard let expectedSelectedText, !expectedSelectedText.isEmpty else { return nil }
-        guard pasteboard.string(forType: .string) == expectedSelectedText else { return nil }
+        guard let copiedText = pasteboard.string(forType: .string),
+              SelectionTextVerification.matches(
+                expectedSelectedText, copiedText, isRichTextField: isRichTextField)
+        else { return nil }
         return claim(pasteboard)
     }
 }
@@ -257,6 +261,13 @@ enum SelectionCapture {
         let range: CFRange?
     }
 
+    private enum AccessibilityPreparation {
+        case requested(ContinuousClock.Instant)
+        case ready
+    }
+
+    private static var accessibilityPreparation: [pid_t: AccessibilityPreparation] = [:]
+
     private enum CopyResult {
         case selected(text: String, focus: AXFocus?)
         case noSelection(focus: AXFocus?)
@@ -268,6 +279,73 @@ enum SelectionCapture {
         case valid(AXFocus)
         case retained(SelectionRetentionReason)
         case failed(SelectionApplyFailure)
+    }
+
+    /// Opt-in assistive access for Electron hosts, without changing their settings.
+    static func prepareAccessibilitySelection() -> Bool {
+        guard AXIsProcessTrusted(),
+              let app = NSWorkspace.shared.frontmostApplication,
+              app.processIdentifier != ProcessInfo.processInfo.processIdentifier,
+              !app.isTerminated else { return true }
+        let pid = app.processIdentifier
+        let application = AXUIElementCreateApplication(pid)
+        _ = AXUIElementSetMessagingTimeout(application, 0.25)
+        let now = ContinuousClock.now
+        switch accessibilityPreparation[pid] {
+        case .ready:
+            return true
+        case .requested(let requestedAt):
+            guard requestedAt.duration(to: now) >= .milliseconds(2300) else { return false }
+        case nil:
+            var value: CFTypeRef?
+            let status = AXUIElementCopyAttributeValue(
+                application, "AXManualAccessibility" as CFString, &value)
+            guard status == .success, let enabled = value as? Bool else {
+                if status != .attributeUnsupported && status != .notImplemented {
+                    NSLog("Mancia: could not query assistive access for process \(pid): \(status.rawValue).")
+                }
+                return true
+            }
+            if enabled {
+                accessibilityPreparation[pid] = .ready
+                return true
+            }
+        }
+        let status = AXUIElementSetAttributeValue(
+            application, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+        guard status == .success else {
+            NSLog("Mancia: could not enable assistive access for process \(pid): \(status.rawValue).")
+            return true
+        }
+        // Electron debounces enablement for two seconds. Reannounce afterward
+        // so editors receive the enabled state, rather than restarting that delay.
+        if accessibilityPreparation[pid] == nil {
+            accessibilityPreparation[pid] = .requested(now)
+            return false
+        }
+        accessibilityPreparation[pid] = .ready
+        return true
+    }
+
+    /// Read a proved selection without borrowing the clipboard or sending keys.
+    static func accessibilitySelection() -> SelectionCaptureResult? {
+        guard AXIsProcessTrusted(),
+              let app = NSWorkspace.shared.frontmostApplication,
+              app.processIdentifier != ProcessInfo.processInfo.processIdentifier,
+              !app.isTerminated,
+              let focus = axFocus(pid: app.processIdentifier),
+              let element = focus.element, let range = focus.range,
+              range.location >= 0, range.length > 0,
+              let text = selectedText(in: focus), !text.isEmpty else { return nil }
+        var subrole: CFTypeRef?
+        _ = AXUIElementCopyAttributeValue(
+            element, kAXSubroleAttribute as CFString, &subrole)
+        guard subrole as? String != kAXSecureTextFieldSubrole,
+              NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier
+        else { return nil }
+        return SelectionCaptureResult(
+            outcome: .selected(text),
+            target: evidence(app: app, baseline: text, scope: .selection, focus: focus))
     }
 
     /// Capture the current selection from the frontmost app via ⌘C.
@@ -369,7 +447,11 @@ enum SelectionCapture {
                     )
                 )
             }
-            guard selectedText(in: selectedAll) == fullText else {
+            guard SelectionTextVerification.coversField(
+                fullText,
+                range: selectedRange,
+                selectedText: selectedText(in: selectedAll),
+                isRichTextField: isRichTextField(selectedAll.element)) else {
                 return SelectionCaptureResult(outcome: .uncertain(.targetChanged), target: target)
             }
         } else if selectedRange.length == 0 {
@@ -513,7 +595,13 @@ enum SelectionCapture {
             try await postCommitDelay()
             guard let finalFocus = axFocus(pid: target.pid),
                   sameField(finalFocus, target),
-                  textValue(in: finalFocus.element) == expectedFieldValue
+                  let actualFieldValue = textValue(in: finalFocus.element),
+                  let verifiedRange = SelectionTextVerification.verifiedReplacementRange(
+                    expectedFieldValue: expectedFieldValue,
+                    actualFieldValue: actualFieldValue,
+                    replacing: appliedRange,
+                    with: text,
+                    isRichTextField: isRichTextField(finalFocus.element))
             else {
                 _ = restorePasteboard()
                 return .failure(.unexpected(
@@ -523,14 +611,12 @@ enum SelectionCapture {
             let verifiedTarget = SelectionTargetEvidence(
                 pid: target.pid,
                 capturedBaseline: text,
-                capturedFieldValue: expectedFieldValue,
+                capturedFieldValue: actualFieldValue,
                 scope: target.scope,
                 targetApp: target.targetApp,
                 window: finalFocus.window,
                 focusedElement: finalFocus.element,
-                selectedRange: CFRange(
-                    location: appliedRange.location,
-                    length: text.utf16.count)
+                selectedRange: verifiedRange
             )
             appliedTarget = verifiedTarget
             return .applied(
@@ -703,11 +789,13 @@ enum SelectionCapture {
         let finalFocus = axFocus(pid: pid)
         let copiedText = pasteboard.string(forType: .string)
         let expectedSelectedText = finalFocus.flatMap(selectedText(in:))
+        let richTextField = isRichTextField(finalFocus?.element)
         let ownership = pasteboard.changeCount == startCount
             ? nil
             : PasteboardOwnership.claimCopiedSelection(
                 expectedSelectedText: expectedSelectedText,
-                from: pasteboard)
+                from: pasteboard,
+                isRichTextField: richTextField)
         defer {
             if let ownership {
                 _ = snapshot.restore(to: pasteboard, ifOwnedBy: ownership)
@@ -741,7 +829,9 @@ enum SelectionCapture {
             }
             return .uncertain(.copyTimedOut)
         }
-        if let expectedSelectedText, expectedSelectedText != text {
+        if let expectedSelectedText,
+           !SelectionTextVerification.matches(
+            expectedSelectedText, text, isRichTextField: richTextField) {
             return .uncertain(.targetChanged)
         }
         return .selected(text: text, focus: finalFocus)
@@ -796,7 +886,9 @@ enum SelectionCapture {
         else {
             return .retained(.selectedRangeChanged)
         }
-        guard selectedText(in: current) == baseline else {
+        guard let selected = selectedText(in: current),
+              SelectionTextVerification.matches(
+                selected, baseline, isRichTextField: isRichTextField(current.element)) else {
             return .retained(.baselineChanged)
         }
         guard let expectedFieldValue = target.capturedFieldValue,
@@ -914,6 +1006,30 @@ enum SelectionCapture {
 
     private static func sameRange(_ lhs: CFRange, _ rhs: CFRange) -> Bool {
         lhs.location == rhs.location && lhs.length == rhs.length
+    }
+
+    private static func isRichTextField(_ element: AXUIElement?) -> Bool {
+        guard let element else { return false }
+        for attribute in ["AXEditableAncestor", "AXHighestEditableAncestor"] {
+            if let ancestor = elementAttribute(element, attribute),
+               CFEqual(ancestor, element) {
+                return true
+            }
+        }
+        // WebKit omits editable-ancestor values, but still exposes its web area.
+        var ancestor = element
+        for _ in 0..<12 {
+            var role: CFTypeRef?
+            if AXUIElementCopyAttributeValue(
+                ancestor, kAXRoleAttribute as CFString, &role) == .success,
+               role as? String == "AXWebArea" {
+                return true
+            }
+            guard let parent = elementAttribute(ancestor, kAXParentAttribute),
+                  !CFEqual(parent, ancestor) else { return false }
+            ancestor = parent
+        }
+        return false
     }
 
     private static func selectedRange(in element: AXUIElement) -> CFRange? {

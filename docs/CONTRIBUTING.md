@@ -53,6 +53,33 @@ signing identity:
 CODESIGN_ID="Mancia Dev Signing" make run
 ```
 
+### Manual edit-safety checks
+
+After changing pasteboard or Accessibility code, use unsent draft text in
+Teams and a native editor such as TextEdit:
+
+- Select a span, run an action, and check the result and surrounding text.
+  Include spaces beside the span, repeated spaces, emoji, and Hebrew text in
+  the rich-text editor.
+- Approve a whole-document edit and confirm it includes the entire draft.
+  An empty draft must not send a placeholder or invent a selection.
+- Undo a Mancia version, then run another action. Check that range offsets
+  still target only the edited span.
+- Change the field or its text during generation. Mancia must retain the
+  output rather than paste into the changed target.
+- Copy unrelated text during the operation. Cleanup must not overwrite that
+  newer clipboard value. Do not send the test message.
+- Enable **Settings → General → Show automatically after selecting text**.
+  Check mouse drag/double-click, Shift-navigation, and Command-A selection.
+  The ribbon should open once, after a short pause, without changing the
+  clipboard or running an action. Carets, password fields, Mancia's own
+  windows, and ordinary typing must not open it. An existing session must not
+  be interrupted. Disable the toggle and confirm the shortcut still works.
+  Repeat mouse and Command-A checks in a disposable VS Code editor with
+  `editor.accessibilitySupport` at its default `auto`, including the first
+  activation while Electron's Accessibility tree initializes. Allow a few
+  seconds for that initial warm-up; no editor settings should be rewritten.
+
 ## Code Style
 
 - Preserve Swift 6 strict-concurrency safety.

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Optional automatic ribbon appearance after mouse or keyboard text selection,
+  controlled by **Settings → General → Show automatically after selecting text**.
+  Disabled by default; selection detection leaves the clipboard untouched and
+  does not run an action.
+
+### Fixed
+
+- Automatic selection appearance now initializes Electron Accessibility support,
+  including VS Code's editor, and retries delayed selection evidence for mouse
+  gestures and Command-A.
+- Rich-text verification now accounts for structural trailing newlines and
+  non-breaking-space representations in web-based editors such as Teams,
+  without relaxing field identity, surrounding text, or native-editor checks.
+
 ## [0.4.0] - 2026-09-05
 
 ### Added

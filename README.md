@@ -87,7 +87,8 @@ signed, so macOS asks again after each rebuild.
 ## Use it
 
 1. Select text in any app.
-2. Press <kbd>⌃</kbd><kbd>⌥</kbd><kbd>⌘</kbd><kbd>E</kbd>.
+2. Press your configured shortcut (default <kbd>⌥</kbd><kbd>⌘</kbd><kbd>A</kbd>),
+   or enable **Settings → General → Show automatically after selecting text**.
 3. Choose **Oops**, **Snippets**, or **Smart Edit** from the opening menu.
   Oops fixes English/Hebrew keyboard-layout mistakes locally. Snippets inserts
   a saved entry from `~/Documents/Mancia/snippets.yaml`, replacing selected
@@ -102,6 +103,17 @@ document. When the field and original text still match, the result replaces
 the selection in place. If the target changed or cannot be verified, Mancia
 keeps the result available through **Copy result**.
 
+Automatic appearance is off by default. When enabled, finishing a mouse
+selection or using Shift with navigation keys or ⌘A opens the ribbon after a
+short pause. It requires a readable Accessibility selection; a caret, secure
+field, or selection inside Mancia does not trigger it. Selecting text never
+runs an action or sends it to Copilot, and does not interrupt an open session.
+The shortcut remains available in hosts that cannot expose their selection.
+Mancia initializes Electron Accessibility support when an app becomes active;
+VS Code can take a few seconds to expose its editor the first time. If VS Code's
+`editor.accessibilitySupport` is explicitly `off`, set it to `auto` or `on`.
+Mancia does not change the editor's settings.
+
 With no selection, Smart Edit asks before reading and sending the whole document
 through Copilot. It then asks separately before replacing the document, with
 the result and an optional comparison available to inspect. Only the second
@@ -114,7 +126,7 @@ and links are not guaranteed to survive.
 
 | Key | Does |
 | --- | --- |
-| <kbd>⌃⌥⌘E</kbd> | Open an edit session (configurable in Settings) |
+| <kbd>⌥⌘A</kbd> | Open an edit session (configurable in Settings) |
 | <kbd>⌘1</kbd> / <kbd>⌘2</kbd> / <kbd>⌘3</kbd> | Choose Oops / Snippets / Smart Edit in the opening menu; bare 1 / 2 / 3 also work |
 | <kbd>⌘1</kbd> through <kbd>⌘9</kbd> | Choose a snippet; in Smart Edit, ⌘1 through ⌘5 activate the matching action control |
 | <kbd>1</kbd> through <kbd>5</kbd> | Choose a visible snippet; in Smart Edit, run Improve / Sharpen / Plan first / Tighten or open Custom |
@@ -130,7 +142,7 @@ and links are not guaranteed to survive.
 | <kbd>Esc</kbd> | Cancel a request, decline a pending approval, or collapse an open retained result; return from an idle submenu to the menu, otherwise close |
 | <kbd>⌘W</kbd> | Close the ribbon |
 
-**Settings** changes the global shortcut, whole-document replacement
+**Settings** changes the global shortcut, automatic appearance after selection, whole-document replacement
 confirmation, post-edit close behavior, and launch at login. Its Advanced
 section controls the Copilot model, reasoning effort, CLI path, and working
 color. Provider **Installed** means the CLI launches; sign-in and service

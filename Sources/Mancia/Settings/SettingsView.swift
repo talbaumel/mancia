@@ -56,6 +56,9 @@ struct SettingsView: View {
             }
 
             Section("General") {
+                Toggle("Show automatically after selecting text", isOn: $settings.showOnTextSelection)
+                    .help("Open the ribbon after a mouse or keyboard selection. Requires Accessibility permission; no action runs automatically.")
+                    .accessibilityIdentifier("settings-show-on-selection")
                 Toggle("Launch at login", isOn: Binding(
                     get: { settings.launchAtLogin },
                     set: { settings.launchAtLogin = $0 }

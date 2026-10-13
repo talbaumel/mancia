@@ -15,6 +15,8 @@ Sources/Mancia/
 ├── StatusBarController.swift     NSStatusItem + menu (Edit / Provider status / Settings /
 │                                 About / Quit)
 ├── HotkeyManager.swift           Registers the global hotkey (KeyboardShortcuts pkg)
+├── SelectionMonitor.swift        Debounces selection gestures and reads AX evidence
+│                                 for opt-in automatic appearance; never copies text
 ├── Permissions.swift             AXIsProcessTrusted() checks + System Settings deep link
 ├── SelectionCapture.swift        Operation-local pasteboard capture, AX target evidence,
 │                                 verified range reselection and paste; keystrokes are
@@ -82,7 +84,19 @@ There is no `Resources/` asset catalog — the menu bar icon is the SF Symbol
 
 `AppDelegate.applicationDidFinishLaunching` builds one `CopilotCLIProvider`,
 one `EditCoordinator`, one `StatusBarController`, and one `HotkeyManager`, all
-wired to call `coordinator.start()`.
+wired to call `coordinator.start()`. `SelectionMonitor` additionally watches
+mouse and keyboard selection gestures when the persisted `showOnTextSelection`
+setting is enabled (default off). After 180 ms without another gesture it reads
+the focused AX selection, without touching the pasteboard. It ignores carets,
+secure fields, Mancia's own process, repeated selection evidence, and active
+sessions. Automatic activation uses that captured evidence directly and does
+not run an action or request provider completion. Global input monitoring is
+stopped when the app terminates. For Electron hosts, activation and input
+hints opt in through `AXManualAccessibility`, then reannounce after Electron's
+two-second debounce so the renderer sees the enabled state. This does not
+rewrite host settings. Unreadable selections are retried for at most twelve
+checks (180 ms initially, then 250 ms apart); new input cancels the wait.
+Preparation never opens the ribbon or remembers a selection by itself.
 
 1. **Trigger and capture.** The hotkey or menu calls `coordinator.start()`.
    Accessibility permission is required. The ribbon opens while capture runs.
@@ -108,6 +122,13 @@ wired to call `coordinator.start()`.
    reselection replaces the exact span; Mancia never sends Undo to discover
    what is on a host's undo stack. After paste, the expected field value must
    be observed before the coordinator records a successful history entry.
+   Web-editable fields may represent inserted spaces as non-breaking spaces
+   or append one structural paragraph newline at the end of the field.
+   Verification accounts only for those representations, preserves surrounding
+   plain text (spaces beside the span may also be re-encoded), and retains the
+   observed AX field value for subsequent
+   edits. Saved UTF-16 ranges exclude the structural newline. Native fields
+   still require exact text; real blank lines are never collapsed.
    Missing evidence, changed contents, or unsupported hosts leave a copyable
    result in `.retained` rather than attempting an unsafe replacement.
 6. **Iteration and recovery.** A fresh selection supplies new target evidence.
@@ -130,7 +151,9 @@ cannot imply that the document was left untouched. Cleanup must finish without
 overwriting a newer clipboard value. A generated result and a verified applied
 result are distinct outcomes.
 
-Replacement is plain text. AX identity and full-field reads are not available
+Replacement is plain text. Whole-document Select All may omit the final
+structural newline in a web-editable field; this still proves full coverage.
+AX identity and full-field reads are not available
 in every host; this limits in-place editing and history, not the ability to
 return generated text for copying. Rich-text reconstruction is not implemented.
 

@@ -51,6 +51,7 @@ final class AppSettings {
         static let copilotModelIsDerived = "copilotModelIsDerived"
         static let reasoningEffort = "reasoningEffort"
         static let postApplyBehavior = "postApplyBehavior"
+        static let showOnTextSelection = "showOnTextSelection"
         static let confirmWholeDocumentReplace = "confirmWholeDocumentReplace"
         static let swooshColor = "swooshColor"
         static let swooshColorMode = "swooshColorMode"
@@ -90,6 +91,9 @@ final class AppSettings {
     /// What the panel does after an edit is applied.
     var postApplyBehavior: PostApplyBehavior {
         didSet { defaults.set(postApplyBehavior.rawValue, forKey: Key.postApplyBehavior) }
+    }
+    var showOnTextSelection: Bool {
+        didSet { defaults.set(showOnTextSelection, forKey: Key.showOnTextSelection) }
     }
     /// When true (default), a whole-document replacement pauses for explicit
     /// confirmation before it overwrites the document. Selection edits are never
@@ -171,6 +175,7 @@ final class AppSettings {
 
         self.postApplyBehavior = defaults.string(forKey: Key.postApplyBehavior)
             .flatMap(PostApplyBehavior.init(rawValue:)) ?? .hybrid
+        self.showOnTextSelection = defaults.bool(forKey: Key.showOnTextSelection)
         // Default on: absent key means the safety gate is enabled.
         self.confirmWholeDocumentReplace =
             defaults.object(forKey: Key.confirmWholeDocumentReplace) as? Bool ?? true

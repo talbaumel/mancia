@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var coordinator: EditCoordinator?
     private var statusBar: StatusBarController?
     private var hotkey: HotkeyManager?
+    private var selectionMonitor: SelectionMonitor?
     private var commandWindow: NSWindow?
     private var commandTargetApp: NSRunningApplication?
     private var settingsWindow: NSWindow?
@@ -26,7 +27,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.statusBar = statusBar
 
         self.hotkey = HotkeyManager { [weak self] in self?.coordinator?.start() }
+        let selectionMonitor = SelectionMonitor(
+            isEnabled: { [weak self] in self?.settings.showOnTextSelection == true },
+            canOpen: { [weak coordinator] in coordinator?.canStartAutomatically == true },
+            prepareAccessibility: { SelectionCapture.prepareAccessibilitySelection() },
+            onSelection: { [weak coordinator] selection in
+                coordinator?.startAutomatically(with: selection)
+            })
+        self.selectionMonitor = selectionMonitor
+        selectionMonitor.start()
         Task { await provider.refreshModelsAndPrepare() }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        selectionMonitor?.stop()
     }
 
     func applicationShouldHandleReopen(
