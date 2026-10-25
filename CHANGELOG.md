@@ -14,8 +14,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Disabled by default; selection detection leaves the clipboard untouched and
   does not run an action.
 
+### Changed
+
+- The ribbon uses native Liquid Glass on macOS 26 and later, with translucent
+  controls and reflective edges. Older macOS versions use a thin material;
+  Reduce Transparency and Increase Contrast retain opaque surfaces.
+
 ### Fixed
 
+- Selection capture briefly retries delayed Accessibility field and range
+  evidence after a successful copy, including in Teams. Recovery preserves
+  every already-captured identity and never falls back to an unverified paste.
+- VS Code edits now release the nonactivating ribbon's key focus before
+  capturing or applying text, so Electron exposes the original editor field
+  and range for verification.
+- Replacing a selection that provably covers a rich editor's entire field no
+  longer preserves its synthetic terminal newline as real surrounding text.
 - Automatic selection appearance now initializes Electron Accessibility support,
   including VS Code's editor, and retries delayed selection evidence for mouse
   gestures and Command-A.

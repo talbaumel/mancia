@@ -49,6 +49,7 @@ struct RibbonView: View {
     @State private var customRunHovered = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
     /// The height of every control on the command row, and so the height the
     /// row rests at once its padding is added.
@@ -85,7 +86,15 @@ struct RibbonView: View {
             glassSurface(tint: RibbonPalette.laneTint, in: shape)
         }
         .clipShape(shape)
-        .overlay(shape.strokeBorder(RibbonPalette.laneEdge, lineWidth: 1))
+        .overlay {
+            shape.strokeBorder(
+                LinearGradient(
+                    colors: [RibbonPalette.laneEdge, RibbonPalette.laneEdge.opacity(0.15),
+                             RibbonPalette.laneEdge.opacity(0.6)],
+                    startPoint: .topLeading, endPoint: .bottomTrailing),
+                lineWidth: 1)
+                .allowsHitTesting(false)
+        }
     }
 
     private var ribbonWithFocusObservers: some View {
@@ -199,7 +208,7 @@ struct RibbonView: View {
             .contentShape(Capsule(style: .continuous))
         }
         .buttonStyle(.plain)
-        .background(Capsule(style: .continuous).fill(RibbonPalette.controlTint))
+        .background(Capsule(style: .continuous).fill(controlTint))
         .overlay(Capsule(style: .continuous).strokeBorder(RibbonPalette.controlEdge, lineWidth: 1))
         .disabled(!model.targetChipEnabled)
         .opacity(model.targetChipEnabled ? 1 : 0.5)
@@ -340,7 +349,7 @@ struct RibbonView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .background(controlShape.fill(RibbonPalette.controlTint))
+        .background(controlShape.fill(controlTint))
         .overlay(controlShape.strokeBorder(RibbonPalette.controlEdge, lineWidth: 1))
         .focusable()
         .focused($focus, equals: .action(index))
@@ -410,8 +419,8 @@ struct RibbonView: View {
         .background(
             controlShape.fill(
                 isHovered
-                    ? RibbonPalette.controlHoverTint
-                    : RibbonPalette.controlTint))
+                    ? controlHoverTint
+                    : controlTint))
         .overlay {
             if processing {
                 SwooshBorder(
@@ -476,7 +485,7 @@ struct RibbonView: View {
             .frame(minWidth: 140, maxWidth: .infinity, alignment: .leading)
             .frame(minHeight: controlHeight, alignment: .topLeading)
             .disabled(locked)
-            .background(controlShape.fill(RibbonPalette.directionTint))
+            .background(controlShape.fill(opaqueSurfaces ? Palette.raised : RibbonPalette.directionTint))
             // Past four lines the field scrolls, and without this the line
             // sliding out of view draws over the field's own top edge.
             .clipShape(controlShape)
@@ -554,22 +563,31 @@ struct RibbonView: View {
 
     // MARK: - Control chrome
 
-    /// A frosted surface rather than a liquid one.
-    ///
-    /// Native Liquid Glass is nearly clear, so over a white document the lane
-    /// and its controls vanished into the page. A material base carries the
-    /// blur, and the neutral tint above it holds a fixed step of contrast whatever
-    /// is behind the ribbon. Reduce Transparency drops to an opaque surface.
+    private var opaqueSurfaces: Bool {
+        reduceTransparency || colorSchemeContrast == .increased
+    }
+
+    private var controlTint: Color {
+        opaqueSurfaces ? Palette.raised : RibbonPalette.controlTint
+    }
+
+    private var controlHoverTint: Color {
+        opaqueSurfaces ? Palette.controlHover : RibbonPalette.controlHoverTint
+    }
+
     @ViewBuilder
     private func glassSurface<S: Shape>(
         tint: Color,
         in shape: S
     ) -> some View {
-        if reduceTransparency {
+        if opaqueSurfaces {
             shape.fill(RibbonPalette.laneOpaque)
+        } else if #available(macOS 26.0, *) {
+            shape.fill(.clear)
+                .glassEffect(.regular.tint(tint), in: shape)
         } else {
             shape
-                .fill(.regularMaterial)
+                .fill(.ultraThinMaterial)
                 .overlay(shape.fill(tint))
         }
     }

@@ -385,6 +385,29 @@ struct RibbonUITests {
 
     // MARK: - Rendering smoke test
 
+    @Test("Glass and accessibility appearances preserve ribbon dimensions", arguments: [
+        (false, false), (true, false), (false, true), (true, true),
+    ])
+    func glassAppearanceLayout(mode: (Bool, Bool)) {
+        let (dark, increaseContrast) = mode
+        let model = PanelModel()
+        model.reset(hasSelection: true, charCount: 12)
+        for screen: PanelModel.Screen in [.menu, .smartEdit] {
+            model.screen = screen
+            let host = NSHostingView(rootView:
+                RibbonView(model: model, width: 640, anchor: .belowSelection, isLive: false)
+                    .environment(\.colorScheme, dark ? .dark : .light))
+            let appearance: NSAppearance.Name = increaseContrast
+                ? (dark ? .accessibilityHighContrastDarkAqua : .accessibilityHighContrastAqua)
+                : (dark ? .darkAqua : .aqua)
+            host.appearance = NSAppearance(named: appearance)
+            host.safeAreaRegions = []
+            #expect(host.fittingSize.width == 640)
+            #expect(host.fittingSize.height.isFinite)
+            #expect(host.fittingSize.height >= 48)
+        }
+    }
+
     /// Off-screen `fittingSize` measurement, the same technique
     /// `RibbonWindow` itself uses to size the live lane — no window or
     /// `NSApplication` event loop required. This is a genuine rendering

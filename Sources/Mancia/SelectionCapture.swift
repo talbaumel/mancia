@@ -356,6 +356,8 @@ enum SelectionCapture {
         guard let app = NSWorkspace.shared.frontmostApplication else {
             return SelectionCaptureResult(outcome: .failed(.noTargetApplication), target: nil)
         }
+        activateTarget(app)
+        try await wait(milliseconds: 120)
         return try await captureSelection(in: app, pasteboard: pasteboard)
     }
 
@@ -372,7 +374,7 @@ enum SelectionCapture {
         if let failure = targetFailure(target) {
             return SelectionCaptureResult(outcome: .failed(failure), target: target)
         }
-        _ = target.targetApp.activate()
+        activateTarget(target.targetApp)
         try await wait(milliseconds: 120)
         guard isFrontmost(target) else {
             return SelectionCaptureResult(outcome: .failed(.targetNotFrontmost), target: target)
@@ -400,7 +402,7 @@ enum SelectionCapture {
             return SelectionCaptureResult(outcome: .uncertain(.targetChanged), target: target)
         }
 
-        _ = target.targetApp.activate()
+        activateTarget(target.targetApp)
         try await wait(milliseconds: 120)
         if let failure = targetFailure(target) {
             return SelectionCaptureResult(outcome: .failed(failure), target: target)
@@ -513,7 +515,7 @@ enum SelectionCapture {
             if let failure = targetApplyFailure(target) { return .failure(failure) }
             guard isFrontmost(target) else { return .failure(.targetNotFrontmost) }
 
-            _ = target.targetApp.activate()
+            activateTarget(target.targetApp)
             try await wait(milliseconds: 150)
             if let failure = targetApplyFailure(target) { return .failure(failure) }
             guard isFrontmost(target) else { return .retained(.targetChanged) }
@@ -546,7 +548,12 @@ enum SelectionCapture {
                 fieldBaseline,
                 range: appliedRange,
                 with: text,
-                entireDocument: target.scope == .entireDocument)
+                entireDocument: target.scope == .entireDocument
+                    || SelectionTextVerification.coversField(
+                        fieldBaseline,
+                        range: appliedRange,
+                        selectedText: baseline,
+                        isRichTextField: isRichTextField(focus.element)))
             else {
                 return .retained(.unverifiedTarget)
             }
@@ -696,6 +703,16 @@ enum SelectionCapture {
 
     // MARK: - Capture
 
+    private static func activateTarget(_ app: NSRunningApplication) {
+        // A nonactivating ribbon can own key focus while the host remains
+        // frontmost. Activation alone then leaves Electron's AX field empty.
+        if let window = NSApp.keyWindow,
+           window.styleMask.contains(.nonactivatingPanel) {
+            window.resignKey()
+        }
+        _ = app.activate()
+    }
+
     private static func captureSelection(
         in app: NSRunningApplication,
         pasteboard: NSPasteboard
@@ -721,7 +738,61 @@ enum SelectionCapture {
             pasteboard: pasteboard
         )
         try Task.checkCancellation()
-        return captureResult(from: copy, app: app, scope: .selection)
+        let result = captureResult(from: copy, app: app, scope: .selection)
+        return try await recoverSelectionEvidence(result) {
+            guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else {
+                return SelectionCaptureResult(outcome: .uncertain(.targetChanged), target: nil)
+            }
+            guard let text = result.text,
+                  let current = axFocus(pid: pid),
+                  let selected = selectedText(in: current) else { return nil }
+            guard SelectionTextVerification.matches(
+                selected, text, isRichTextField: isRichTextField(current.element)) else {
+                return SelectionCaptureResult(outcome: .uncertain(.targetChanged), target: nil)
+            }
+            return SelectionCaptureResult(
+                outcome: .selected(text),
+                target: evidence(app: app, baseline: text, scope: .selection, focus: current))
+        }
+    }
+
+    static func recoverSelectionEvidence(
+        _ initial: SelectionCaptureResult,
+        read: () -> SelectionCaptureResult?,
+        wait: () async throws -> Void = { try await Task.sleep(for: .milliseconds(50)) }
+    ) async throws -> SelectionCaptureResult {
+        guard initial.text != nil, initial.target != nil else { return initial }
+        var result = initial
+        for _ in 0..<6 {
+            try Task.checkCancellation()
+            guard let previous = result.target else { return result }
+            if previous.hasVerifiedRangeIdentity, previous.capturedFieldValue != nil {
+                return result
+            }
+            try await wait()
+            try Task.checkCancellation()
+            guard let next = read() else { continue }
+            guard let current = next.target,
+                  current.pid == previous.pid,
+                  current.scope == previous.scope,
+                  next.text == result.text,
+                  current.capturedBaseline == previous.capturedBaseline,
+                  previous.focusedElement.map({ expected in
+                      current.focusedElement.map { CFEqual(expected, $0) } ?? false
+                  }) ?? true,
+                  previous.window.map({ expected in
+                      current.window.map { CFEqual(expected, $0) } ?? false
+                  }) ?? true,
+                  previous.selectedRange.map({ expected in
+                      current.selectedRange.map { sameRange(expected, $0) } ?? false
+                  }) ?? true,
+                  previous.capturedFieldValue.map({ $0 == current.capturedFieldValue }) ?? true
+            else {
+                return SelectionCaptureResult(outcome: .uncertain(.targetChanged), target: nil)
+            }
+            result = next
+        }
+        return result
     }
 
     private static func captureResult(

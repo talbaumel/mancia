@@ -201,6 +201,7 @@ final class EditCoordinator {
             fail(captureGuidance(for: failure))
         }
         syncIterationState()
+        ribbon.focus()
 
         if let queuedSnippet {
             self.queuedSnippet = nil

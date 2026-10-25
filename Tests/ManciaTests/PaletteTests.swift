@@ -5,6 +5,19 @@ import Testing
 @testable import Mancia
 
 @MainActor
+@Test("Glass surfaces are translucent and the accessibility fallback is opaque", arguments: [false, true])
+func glassSurfaceOpacity(dark: Bool) throws {
+    let appearance = try #require(NSAppearance(named: dark ? .darkAqua : .aqua))
+    appearance.performAsCurrentDrawingAppearance {
+        for color in [RibbonPalette.laneTint, RibbonPalette.controlTint, RibbonPalette.controlHoverTint] {
+            let alpha = NSColor(color).alphaComponent
+            #expect(alpha > 0 && alpha < 0.65)
+        }
+        #expect(NSColor(RibbonPalette.laneOpaque).alphaComponent == 1)
+    }
+}
+
+@MainActor
 @Test("Palette text and focus remain readable in both appearances", arguments: [false, true])
 func paletteContrast(dark: Bool) throws {
     let appearance = try #require(NSAppearance(named: dark ? .darkAqua : .aqua))

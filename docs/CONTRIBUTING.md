@@ -61,6 +61,11 @@ Teams and a native editor such as TextEdit:
 - Select a span, run an action, and check the result and surrounding text.
   Include spaces beside the span, repeated spaces, emoji, and Hebrew text in
   the rich-text editor.
+- In an unsent Teams draft, invoke the ribbon immediately after selecting text,
+  including just after opening the composer. Delayed field or range evidence
+  may recover briefly after copying, without another copy or keystroke. Change
+  fields during that window and confirm the edit is refused. An editor that
+  never exposes its field and range must still retain the result, not paste.
 - Approve a whole-document edit and confirm it includes the entire draft.
   An empty draft must not send a placeholder or invent a selection.
 - Undo a Mancia version, then run another action. Check that range offsets
@@ -79,6 +84,15 @@ Teams and a native editor such as TextEdit:
   `editor.accessibilitySupport` at its default `auto`, including the first
   activation while Electron's Accessibility tree initializes. Allow a few
   seconds for that initial warm-up; no editor settings should be rewritten.
+- In that disposable VS Code editor, run an action while the ribbon owns key
+  focus. Verify the refreshed selection, replacement, and Undo all succeed.
+  The ribbon must yield key focus to the editor for capture and paste, without
+  disappearing, then regain it so Escape and typing still work. Changing the
+  editor field or document during generation must still retain the result.
+  Include Command-A followed by a single-line replacement without a trailing
+  newline; the editor's structural newline must not cause a false mismatch.
+  If the editor refuses AX range reselection for Undo, retain the result and
+  show the failure rather than guessing a range.
 
 ## Code Style
 

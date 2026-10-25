@@ -1,9 +1,118 @@
+import AppKit
 import Foundation
 import Testing
 @testable import Mancia
 
 @Suite("Selection text verification")
 struct SelectionTextVerificationTests {
+    @MainActor
+    @Test("Delayed editor evidence is recovered without copying again")
+    func delayedSelectionEvidence() async throws {
+        let element = AXUIElementCreateApplication(NSRunningApplication.current.processIdentifier)
+        let initial = captureEvidence(element: nil, range: nil, value: nil)
+        let complete = captureEvidence(element: element)
+        var reads = 0
+        var waits = 0
+        let result = try await SelectionCapture.recoverSelectionEvidence(initial, read: {
+            reads += 1
+            return reads < 3 ? nil : complete
+        }, wait: { waits += 1 })
+        #expect(reads == 3)
+        #expect(waits == 3)
+        #expect(result.text == "draft")
+        #expect(result.target?.hasVerifiedRangeIdentity == true)
+        #expect(result.target?.capturedFieldValue == "draft")
+    }
+
+    @MainActor
+    @Test("Complete selection evidence never waits or rereads the editor")
+    func completeSelectionEvidenceIsImmediate() async throws {
+        let element = AXUIElementCreateApplication(NSRunningApplication.current.processIdentifier)
+        let initial = captureEvidence(element: element)
+        var calls = 0
+        let result = try await SelectionCapture.recoverSelectionEvidence(initial, read: {
+            calls += 1
+            return nil
+        }, wait: { calls += 1 })
+        #expect(calls == 0)
+        #expect(result.target?.hasVerifiedRangeIdentity == true)
+    }
+
+    @MainActor
+    @Test("Unavailable editor evidence stops after a bounded number of retries")
+    func selectionEvidenceRetriesAreBounded() async throws {
+        let initial = captureEvidence(element: nil, range: nil, value: nil)
+        var reads = 0
+        let result = try await SelectionCapture.recoverSelectionEvidence(initial, read: {
+            reads += 1
+            return nil
+        }, wait: {})
+        #expect(reads == 6)
+        #expect(result.text == initial.text)
+        #expect(result.target?.hasVerifiedRangeIdentity == false)
+        #expect(result.target?.capturedFieldValue == nil)
+    }
+
+    @MainActor
+    @Test("Evidence recovery rejects changed windows, fields, ranges, and text")
+    func selectionEvidenceRecoveryRejectsChangedTargets() async throws {
+        let pid = NSRunningApplication.current.processIdentifier
+        let element = AXUIElementCreateApplication(pid)
+        let other = AXUIElementCreateApplication(pid + 1)
+        let initial = captureEvidence(element: element, window: element, value: nil)
+        let changed = [
+            captureEvidence(element: other, window: element),
+            captureEvidence(element: element, window: other),
+            captureEvidence(element: element, window: element, range: CFRange(location: 1, length: 5)),
+            captureEvidence(element: element, window: element, text: "other"),
+            SelectionCaptureResult(outcome: .uncertain(.targetChanged), target: nil),
+        ]
+        for candidate in changed {
+            let result = try await SelectionCapture.recoverSelectionEvidence(
+                initial, read: { candidate }, wait: {})
+            #expect(result.outcome == .uncertain(.targetChanged))
+            #expect(result.target == nil)
+        }
+    }
+
+    @MainActor
+    @Test("Cancelling delayed evidence recovery prevents another editor read")
+    func selectionEvidenceRecoveryRespectsCancellation() async {
+        let initial = captureEvidence(element: nil, range: nil, value: nil)
+        var reads = 0
+        do {
+            _ = try await SelectionCapture.recoverSelectionEvidence(initial, read: {
+                reads += 1
+                return nil
+            }, wait: { throw CancellationError() })
+            Issue.record("Cancelled recovery must throw")
+        } catch is CancellationError {
+            #expect(reads == 0)
+        } catch {
+            Issue.record("Unexpected recovery error: \(error)")
+        }
+    }
+
+    @MainActor
+    private func captureEvidence(
+        element: AXUIElement?,
+        window: AXUIElement? = nil,
+        range: CFRange? = CFRange(location: 0, length: 5),
+        value: String? = "draft",
+        text: String = "draft"
+    ) -> SelectionCaptureResult {
+        let app = NSRunningApplication.current
+        return SelectionCaptureResult(outcome: .selected(text), target: SelectionTargetEvidence(
+            pid: app.processIdentifier,
+            capturedBaseline: text,
+            capturedFieldValue: value,
+            scope: .selection,
+            targetApp: app,
+            window: window,
+            focusedElement: element,
+            selectedRange: range))
+    }
+
     @Test("Rich-text representations verify without extending the saved range", arguments: [
         ("replacement", "replacement\n"),
         ("first  second", "first \u{00A0}second\n"),

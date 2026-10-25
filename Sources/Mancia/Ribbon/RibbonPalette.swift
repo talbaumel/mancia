@@ -1,18 +1,21 @@
 import SwiftUI
 
-/// The shared palette over a restrained material backdrop. Controls use solid
-/// fills so their text stays readable regardless of the host document.
+/// Translucent chrome over the system glass material, with an opaque fallback.
 enum RibbonPalette {
-    static let laneTint = Palette.surface.opacity(0.88)
-    static let laneEdge = Palette.border
+    static let laneTint = Palette.dynamic(
+        light: 0xF2F7FF, dark: 0xDCEAFF, lightAlpha: 0.12, darkAlpha: 0.04)
+    static let laneEdge = Palette.dynamic(
+        light: 0xFFFFFF, dark: 0xFFFFFF, lightAlpha: 0.65, darkAlpha: 0.20)
     /// Buttons sit on their own step above the lane so each one reads as a
     /// distinct target rather than as a label floating on the strip.
-    static let controlTint = Palette.raised
-    static let controlHoverTint = Palette.controlHover
-    static let controlEdge = Palette.border
-    /// The instruction field is the one recessed surface: paper rather than
-    /// chrome, so writing reads as writing.
-    static let directionTint = Palette.raised
+    static let controlTint = Palette.dynamic(
+        light: 0xFFFFFF, dark: 0xFFFFFF, lightAlpha: 0.32, darkAlpha: 0.07)
+    static let controlHoverTint = Palette.dynamic(
+        light: 0xFFFFFF, dark: 0xFFFFFF, lightAlpha: 0.58, darkAlpha: 0.16)
+    static let controlEdge = Palette.dynamic(
+        light: 0xFFFFFF, dark: 0xFFFFFF, lightAlpha: 0.72, darkAlpha: 0.22)
+    /// A denser surface keeps the instruction editor readable.
+    static let directionTint = Palette.raised.opacity(0.65)
     /// Used when Reduce Transparency is on, where translucency is not an option
     /// and the lane still has to be legible over anything behind it.
     static let laneOpaque = Palette.surface
