@@ -278,8 +278,11 @@ enum DebugCLI {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.level = .floating
+        var dragCount = 0
         let hosting = NSHostingView(
-            rootView: RibbonView(model: model, width: width, anchor: .screen, isLive: false))
+            rootView: RibbonView(
+                model: model, width: width, anchor: .screen, isLive: false,
+                onDrag: { _ in dragCount += 1 }))
         hosting.safeAreaRegions = []
         hosting.sizingOptions = []
         panel.contentView = hosting
@@ -328,10 +331,17 @@ enum DebugCLI {
             await settle()
         }
 
+        await clickControl("Ribbon-drag")
+        if dragCount != 1 { failures.append("menu: drag handle did not receive the mouse") }
+        if model.screen != .menu || !ran.isEmpty {
+            failures.append("menu: dragging changed the screen or ran an edit")
+        }
         await clickControl("Menu-1")
         if corrections != 1 { failures.append("menu: Oops did not dispatch") }
         await clickControl("Menu-2")
         if model.screen != .snippets { failures.append("menu: Snippets did not open") }
+        await clickControl("Ribbon-drag")
+        if dragCount != 2 { failures.append("snippets: drag handle did not receive the mouse") }
         await clickControl("Snippet-1")
         if pasted != model.snippets { failures.append("menu: snippet did not dispatch") }
         await clickControl("Menu-back")
@@ -342,6 +352,8 @@ enum DebugCLI {
         if model.screen != .menu { failures.append("smart edit: Back did not open menu") }
         if !ran.isEmpty { failures.append("menu: navigation unexpectedly ran an edit") }
         await clickControl("Menu-3")
+        await clickControl("Ribbon-drag")
+        if dragCount != 3 { failures.append("smart edit: drag handle did not receive the mouse") }
         log.append("menu: checked Oops, Snippets, snippet insertion callback, Smart Edit, and Back")
 
         // MARK: idle
@@ -756,11 +768,10 @@ enum DebugCLI {
     /// expanded failure detail) has real geometry to click into rather than
     /// being clipped by the check's own fixed frame.
     ///
-    /// Width is resolved from the model, not a fixed constant: Custom's
-    /// disclosed field needs `RibbonPlacement.expandedWidth`, the same swap
-    /// `RibbonWindow.currentContext()` makes, or its Run control (and
-    /// anything else in that wider row) reports an accessibility frame past
-    /// the edge of a lane still sized for the standard width. The live
+    /// Width follows the same content measurement as
+    /// `RibbonWindow.currentContext()`, including the compact menu and drag
+    /// handle, so the check catches controls squeezed out by their neighbors.
+    /// The live
     /// hosting view's `rootView` is reassigned to match — a `RibbonView`'s
     /// `width` is a plain `let`, so nothing about the width it renders at
     /// changes just because the panel's own frame does.
@@ -769,8 +780,11 @@ enum DebugCLI {
         panel: NSPanel, hosting: NSHostingView<RibbonView>, model: PanelModel,
         width requestedWidth: CGFloat? = nil
     ) {
-        let width = requestedWidth ?? (model.prefersExpandedRibbon
-            ? RibbonPlacement.expandedWidth : RibbonPlacement.standardWidth)
+        let width = requestedWidth ?? RibbonPlacement.contentWidth(
+            screen: model.screen, presets: model.presets,
+            snippetTitles: model.snippets.map(\.title),
+            snippetError: model.snippetError,
+            customExpanded: model.prefersExpandedRibbon)
         let measurement = NSHostingView(
             rootView: RibbonView(model: model, width: width, anchor: .screen, isLive: false))
         measurement.safeAreaRegions = []
@@ -780,7 +794,9 @@ enum DebugCLI {
         frame.size = NSSize(width: width, height: height)
         frame.origin.y = top - height
         panel.setFrame(frame, display: true)
-        hosting.rootView = RibbonView(model: model, width: width, anchor: .screen, isLive: false)
+        hosting.rootView = RibbonView(
+            model: model, width: width, anchor: .screen, isLive: false,
+            onDrag: hosting.rootView.onDrag)
         hosting.frame = NSRect(origin: .zero, size: frame.size)
         hosting.layoutSubtreeIfNeeded()
     }

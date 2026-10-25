@@ -54,4 +54,54 @@ struct PointerPlacementTests {
         #expect(secondary.contains(result.frame))
         #expect(result.frame.minX == secondary.minX)
     }
+
+    @Test("Dragged placement retains its top-left corner while content changes")
+    func draggedPlacementResizesFromUserPosition() {
+        let corner = CGPoint(x: 300, y: 700)
+        for size in [CGSize(width: 360, height: 48), CGSize(width: 780, height: 220)] {
+            let frame = RibbonPlacement.draggedFrame(
+                size: size, topLeft: corner, visibleFrame: visible)
+            #expect(frame.minX == corner.x)
+            #expect(frame.maxY == corner.y)
+            #expect(frame.size == size)
+        }
+    }
+
+    @Test("Dragged placement stays reachable at every display edge")
+    func draggedPlacementClampsToDisplay() {
+        for corner in [
+            CGPoint(x: -100, y: 1000), CGPoint(x: 1400, y: 80),
+            CGPoint(x: 5000, y: -500),
+        ] {
+            let frame = RibbonPlacement.draggedFrame(
+                size: CGSize(width: 780, height: 220), topLeft: corner, visibleFrame: visible)
+            #expect(visible.contains(frame))
+        }
+    }
+
+    @Test("Dragged placement supports negative display coordinates and removed displays")
+    func draggedPlacementAcrossDisplays() {
+        let secondary = visible.offsetBy(dx: -1440, dy: -900)
+        let corner = CGPoint(x: -1200, y: -200)
+        let size = CGSize(width: 600, height: 200)
+        let frame = RibbonPlacement.draggedFrame(
+            size: size, topLeft: corner, visibleFrame: secondary)
+        #expect(frame.minX == corner.x)
+        #expect(frame.maxY == corner.y)
+        #expect(secondary.contains(frame))
+
+        let recovered = RibbonPlacement.draggedFrame(
+            size: size, topLeft: corner, visibleFrame: visible)
+        #expect(visible.contains(recovered))
+    }
+
+    @Test("Oversized dragged content keeps its handle on screen")
+    func oversizedDraggedPlacement() {
+        let frame = RibbonPlacement.draggedFrame(
+            size: CGSize(width: 1800, height: 1200),
+            topLeft: CGPoint(x: 500, y: 700), visibleFrame: visible)
+        #expect(frame.width == visible.width)
+        #expect(frame.minX == visible.minX)
+        #expect(frame.maxY == visible.maxY)
+    }
 }

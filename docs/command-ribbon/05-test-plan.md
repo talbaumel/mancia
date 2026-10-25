@@ -121,6 +121,15 @@ re-grant Accessibility after each `make app` (`CLAUDE.md`).
 | P11 | Tall narrow selection with more room on the right, then on the left | Lane uses the roomier margin; opens away from the text and closes back toward it |
 | P12 | Repeat P11 with Reduce Motion enabled | Open and close fade without horizontal travel |
 | P13 | Drag the lane from its background at each margin anchor | Lane does not move from its computed anchor |
+| P14 | Drag the dotted handle in Menu, Snippets, and Smart Edit | Lane follows the drag; no action runs and the edit target is unchanged |
+| P15 | After dragging, open Custom, review, or error details | Lane keeps the user's top-left position except where display edges require clamping |
+| P16 | Drag to a second display, then expand and collapse content | Lane stays on that display and the handle remains reachable |
+| P17 | After dragging, capture another selection or apply an edit | Automatic selection placement and post-apply avoidance do not override the user's position |
+| P18 | Close a dragged lane and invoke again | Automatic placement resumes near the invocation pointer |
+
+P14–P18 require a manual run with a real pointer; the automated
+`--ribbon-click-check` covers handle hit regions and unaffected action controls,
+while `PointerPlacementTests` covers resizing and display-edge clamping.
 
 #### Manual run — 2026-08-03
 

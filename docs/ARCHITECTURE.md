@@ -165,6 +165,13 @@ fallback. The established anchor is retained while content grows, except when
 the target moves or the ribbon would obscure newly applied text. The window
 measures content at the resolved width before setting its height.
 
+The dotted handle uses AppKit's native window drag without activating the host
+application or changing the edit target. After a drag, the user's top-left
+position replaces automatic placement for that session, including selection
+changes and post-apply avoidance. Content resizing preserves that corner,
+clamped to the current display's visible frame; reopening restores automatic
+placement. Buttons and text fields do not initiate window dragging.
+
 The five action names stay visible on hover. Custom discloses a bounded
 multiline editor. The target control, progress, approvals, review, and retained
 results share the same ribbon rather than separate windows.

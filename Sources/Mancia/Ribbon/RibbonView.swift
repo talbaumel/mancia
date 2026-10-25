@@ -35,6 +35,7 @@ struct RibbonView: View {
     var isLive = true
     /// Tell the window the lane wants to be a different height.
     var onLayoutChange: () -> Void = {}
+    var onDrag: (NSEvent) -> Void = { _ in }
 
     /// Mirrors `model.focusedCell`. The model is the source of truth because
     /// Tab arrives at the window rather than at a view.
@@ -172,6 +173,7 @@ struct RibbonView: View {
     /// which `RibbonPlacement` has already budgeted down to the point.
     private var targetRow: some View {
         HStack(spacing: 0) {
+            dragHandle.padding(.trailing, 8)
             targetChip
             Spacer(minLength: 0)
             backButton
@@ -287,6 +289,7 @@ struct RibbonView: View {
 
     private var menuRow: some View {
         HStack(spacing: 8) {
+            dragHandle
             if model.screen == .snippets { backButton }
             if model.phase == .running {
                 Text(model.runningTitle)
@@ -326,6 +329,11 @@ struct RibbonView: View {
         }
         .padding(8)
         .frame(minHeight: rowHeight)
+    }
+
+    private var dragHandle: some View {
+        RibbonDragHandle(onDrag: onDrag)
+            .frame(width: 16, height: controlHeight)
     }
 
     private func menuButton(

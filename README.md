@@ -31,6 +31,8 @@ window, no copy-paste round trip.
 - The ribbon opens **near the mouse pointer** on its display: below it when
   there is room, or above it near the bottom edge. It keeps that opening point
   while you use it rather than chasing subsequent mouse movement.
+  Drag the dotted handle to move it; that position stays for the open session,
+  including when you switch screens or expand Custom or review.
 - **Improve** clarifies coding-agent requests and everyday prose, **Sharpen**
   turns rough requests into clear instructions, **Plan first** rewrites a
   request to ask an agent for a short plan with goals and verifiers before

@@ -218,12 +218,12 @@ enum RibbonPlacement {
     }
 
     static let compactWidth: CGFloat =
-        compactOopsWidth + 8 + compactSnippetsWidth + 8 + compactSmartEditWidth + 24
+        compactOopsWidth + 8 + compactSnippetsWidth + 8 + compactSmartEditWidth + 48
 
     static func snippetsWidth(titles: [String]) -> CGFloat {
         let widths = titles.map(compactSnippetWidth)
-        // Row padding + Back + spacing + scroll padding around the buttons.
-        return widths.reduce(0, +) + CGFloat(max(0, widths.count - 1) * 8) + 62
+        // Row padding + drag handle + Back + spacing + scroll padding.
+        return widths.reduce(0, +) + CGFloat(max(0, widths.count - 1) * 8) + 86
     }
 
     static func contentWidth(
@@ -328,6 +328,17 @@ enum RibbonPlacement {
     /// opening height would let the lane claim a gap it cannot actually fit
     /// into, and discover it only once a result arrived.
     static let projectedHeight: CGFloat = 200
+
+    /// Keep the user's top-left corner as content changes, adjusting only
+    /// enough to keep the lane (and especially its drag handle) reachable.
+    static func draggedFrame(size: CGSize, topLeft: CGPoint, visibleFrame: CGRect) -> CGRect {
+        let width = min(size.width, visibleFrame.width)
+        let x = min(max(topLeft.x, visibleFrame.minX), visibleFrame.maxX - width)
+        let top = min(
+            max(topLeft.y, visibleFrame.minY + min(size.height, visibleFrame.height)),
+            visibleFrame.maxY)
+        return CGRect(x: x, y: top - size.height, width: width, height: size.height)
+    }
 
     static func resolve(height: CGFloat, in context: Context) -> Resolution {
         let topGap = context.screenFrame.maxY - context.visibleFrame.maxY
