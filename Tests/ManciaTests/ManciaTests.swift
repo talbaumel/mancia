@@ -246,9 +246,8 @@ func argvAlwaysSandboxed() {
                     #expect(!args.contains("--allow-all-tools"))
                     // Ambient custom instructions stay off.
                     #expect(args.contains("--no-custom-instructions"))
-                    // Ambient MCP and remote-session context stay off.
                     #expect(args.contains("--disable-builtin-mcps"))
-                    #expect(args.contains("--no-remote"))
+                    #expect(!args.contains("--no-remote"))
                 }
             }
         }
@@ -707,7 +706,7 @@ func argvHasEmptyAvailableTools() {
     #expect(args.contains("--no-color"))
     #expect(args.contains("--no-custom-instructions"))
     #expect(args.contains("--disable-builtin-mcps"))
-    #expect(args.contains("--no-remote"))
+    #expect(!args.contains("--no-remote"))
     // prompt is passed as its own element right after -p
     let promptIndex = args.firstIndex(of: "-p")
     #expect(promptIndex != nil)
@@ -724,11 +723,57 @@ func acpArgvDisablesAmbientContext() {
     #expect(args.contains("--available-tools="))
     #expect(args.contains("--no-custom-instructions"))
     #expect(args.contains("--disable-builtin-mcps"))
-    #expect(args.contains("--no-remote"))
+    #expect(!args.contains("--no-remote"))
     #expect(args.contains("--model"))
     #expect(args.contains("gpt-5.4-mini"))
     #expect(args.contains("--reasoning-effort"))
     #expect(args.contains("none"))
+}
+
+@Test("Both CLI paths disable each configured MCP server")
+func configuredMCPServersAreDisabled() {
+    let servers = ["workiq", "github"]
+    let arguments = [
+        CopilotCLIProvider.arguments(
+            executable: "copilot", prompt: "hi", model: "", disabledMCPServers: servers),
+        CopilotCLIProvider.acpArguments(
+            executable: "copilot", model: "", disabledMCPServers: servers),
+    ]
+    for args in arguments {
+        let disabled = args.indices.filter { args[$0] == "--disable-mcp-server" }
+        #expect(disabled.count == servers.count)
+        #expect(disabled.map { args[$0 + 1] } == servers)
+    }
+    #expect(CopilotMCPServers.names(fromListJSON:
+        #"{"mcpServers":{"workiq":{},"github":{}}}"#) == ["github", "workiq"])
+    #expect(CopilotMCPServers.names(fromListJSON: "invalid") == [])
+}
+
+@Test("ACP detects CLI failures without treating ordinary edited text as a failure")
+func acpDetectsCLIFailureReplies() {
+    #expect(CopilotACPClient.isCLIFailureReply("Warning: Request failed.Error: No response was returned."))
+    #expect(CopilotACPClient.isCLIFailureReply("Error: No response was returned."))
+    #expect(!CopilotACPClient.isCLIFailureReply("The document mentions Error: as a label."))
+    #expect(!CopilotACPClient.isCLIFailureReply("Warning: Check the input."))
+}
+
+@Test("ACP strips a model fallback notice but preserves the real answer")
+func acpRemovesModelFallbackNotice() {
+    let notice = #"Info: Model "old" is no longer available. Using "new" instead."#
+    #expect(CopilotACPClient.removingModelFallbackNotice(notice + "Edited text") == "Edited text")
+    #expect(CopilotACPClient.removingModelFallbackNotice("Edited text") == "Edited text")
+    #expect(CopilotACPClient.removingModelFallbackNotice("Text " + notice) == "Text " + notice)
+}
+
+@Test("Reasoning effort retry accepts both old and current CLI errors")
+func reasoningEffortRetryRecognizesCLIFormats() {
+    for message in [
+        #"Reasoning effort "high" is not supported for model "test""#,
+        #"Model "test" does not support reasoning effort configuration"#,
+    ] {
+        #expect(CopilotCLIProvider.shouldRetryWithoutReasoningEffort(text: message, reasoningEffort: "high"))
+        #expect(!CopilotCLIProvider.shouldRetryWithoutReasoningEffort(text: message, reasoningEffort: ""))
+    }
 }
 
 @Test("ACP failures fall back to one-shot CLI except cancellation and timeout")

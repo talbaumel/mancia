@@ -23,6 +23,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   non-breaking-space representations in web-based editors such as Teams,
   without relaxing field identity, surrounding text, or native-editor checks.
 
+## [0.5.0] - 2026-10-25
+
+### Changed
+
+- Merge upstream provider updates while retaining this fork's tool-selection
+  menu, editable prompts, ribbon layout, and whole-document confirmation flow.
+- Disable configured Copilot MCP servers during editing so their tool
+  definitions do not consume the model's context.
+
+### Fixed
+
+- Support Copilot CLI versions that reject `--no-remote`.
+- Treat Copilot error replies as failures instead of pasting them into text.
+- Remove retired-model fallback notices from generated text.
+- Recognize the current unsupported reasoning-effort error and retry at the
+  model default.
+
 ## [0.4.0] - 2026-09-05
 
 ### Added
@@ -229,7 +246,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   drag-to-install disk image.
 - Debug/E2E hooks: `--provider-check` and `--complete <action>`.
 
-[Unreleased]: https://github.com/peteriz/mancia/compare/0.3.0...HEAD
+[Unreleased]: https://github.com/peteriz/mancia/compare/0.5.0...HEAD
+[0.5.0]: https://github.com/peteriz/mancia/compare/0.4.0...0.5.0
+[0.4.0]: https://github.com/peteriz/mancia/compare/0.3.3...0.4.0
+[0.3.3]: https://github.com/peteriz/mancia/compare/0.3.2...0.3.3
+[0.3.2]: https://github.com/peteriz/mancia/compare/0.3.1...0.3.2
+[0.3.1]: https://github.com/peteriz/mancia/compare/0.3.0...0.3.1
 [0.3.0]: https://github.com/peteriz/mancia/compare/0.2.2...0.3.0
 [0.2.2]: https://github.com/peteriz/mancia/compare/0.2.1...0.2.2
 [0.2.1]: https://github.com/peteriz/mancia/compare/0.2.0...0.2.1

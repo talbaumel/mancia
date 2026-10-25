@@ -1,4 +1,7 @@
 import Foundation
+import os
+
+private let providerLog = Logger(subsystem: "io.github.peteriz.mancia", category: "provider")
 
 /// Errors surfaced by the Copilot provider, each with actionable guidance.
 enum ProviderError: LocalizedError, Equatable {
@@ -39,6 +42,7 @@ final class CopilotCLIProvider: LLMProvider {
 
     private let settings: AppSettings
     private let acpSidecar = CopilotACPSidecar()
+    private let mcpServers = CopilotMCPServers()
 
     init(settings: AppSettings) {
         self.settings = settings
@@ -109,7 +113,10 @@ final class CopilotCLIProvider: LLMProvider {
 
     /// Build the full argv for a prompt. When the executable is the `env`
     /// fallback, `copilot` is prepended as the first argument.
-    static func arguments(executable: String, prompt: String, model: String, reasoningEffort: String = "") -> [String] {
+    static func arguments(
+        executable: String, prompt: String, model: String, reasoningEffort: String = "",
+        disabledMCPServers: [String] = []
+    ) -> [String] {
         var args: [String] = []
         if executable == "/usr/bin/env" { args.append("copilot") }
         args += [
@@ -119,8 +126,8 @@ final class CopilotCLIProvider: LLMProvider {
             "--no-custom-instructions",
             "--available-tools=",
             "--disable-builtin-mcps",
-            "--no-remote",
         ]
+        for server in disabledMCPServers { args += ["--disable-mcp-server", server] }
         let trimmedModel = model.trimmingCharacters(in: .whitespaces)
         if !trimmedModel.isEmpty { args += ["--model", trimmedModel] }
         let trimmedEffort = reasoningEffort.trimmingCharacters(in: .whitespaces)
@@ -130,7 +137,10 @@ final class CopilotCLIProvider: LLMProvider {
 
     /// Build argv for the persistent ACP server used to keep one empty edit
     /// session warm while the panel is open.
-    static func acpArguments(executable: String, model: String, reasoningEffort: String = "") -> [String] {
+    static func acpArguments(
+        executable: String, model: String, reasoningEffort: String = "",
+        disabledMCPServers: [String] = []
+    ) -> [String] {
         var args: [String] = []
         if executable == "/usr/bin/env" { args.append("copilot") }
         args += [
@@ -140,8 +150,8 @@ final class CopilotCLIProvider: LLMProvider {
             "--no-custom-instructions",
             "--available-tools=",
             "--disable-builtin-mcps",
-            "--no-remote",
         ]
+        for server in disabledMCPServers { args += ["--disable-mcp-server", server] }
         let trimmedModel = model.trimmingCharacters(in: .whitespaces)
         if !trimmedModel.isEmpty { args += ["--model", trimmedModel] }
         let trimmedEffort = reasoningEffort.trimmingCharacters(in: .whitespaces)
@@ -199,16 +209,22 @@ final class CopilotCLIProvider: LLMProvider {
             defaultReasoningEffort: defaultReasoningEffort,
             overrides: overrides)
         let executable = Self.resolveExecutable(override: path.isEmpty ? nil : path)
+        let disabled = await mcpServers.names(executable: executable)
+        let started = Date()
+        providerLog.info("complete: ACP start model=\(requestConfig.model, privacy: .public) effort=\(requestConfig.reasoningEffort, privacy: .public)")
         do {
             let output = try await acpSidecar.complete(
                 prompt,
                 config: CopilotACPConfig(
                     executable: executable,
                     model: requestConfig.model,
-                    reasoningEffort: requestConfig.reasoningEffort)
+                    reasoningEffort: requestConfig.reasoningEffort,
+                    disabledMCPServers: disabled)
             )
+            providerLog.info("complete: ACP ok in \(Date().timeIntervalSince(started), privacy: .public)s")
             return try Self.validatedOutput(output)
         } catch {
+            providerLog.error("complete: ACP failed in \(Date().timeIntervalSince(started), privacy: .public)s: \(String(describing: error), privacy: .private)")
             if !Self.shouldFallbackFromACPError(error) { throw error }
             // ACP is a latency optimization. Keep the old one-shot CLI path as
             // the reliability boundary when the sidecar is missing or wedged.
@@ -217,7 +233,8 @@ final class CopilotCLIProvider: LLMProvider {
             executable: executable,
             prompt: prompt,
             model: requestConfig.model,
-            reasoningEffort: requestConfig.reasoningEffort)
+            reasoningEffort: requestConfig.reasoningEffort,
+            disabledMCPServers: disabled)
 
         var result: ProcessResult
         do {
@@ -226,6 +243,7 @@ final class CopilotCLIProvider: LLMProvider {
             throw error
         }
 
+        providerLog.info("complete: one-shot exit \(result.exitCode, privacy: .public) in \(Date().timeIntervalSince(started), privacy: .public)s")
         var combined = result.stdout + "\n" + result.stderr
         if Self.shouldRetryWithoutReasoningEffort(
             text: combined, reasoningEffort: requestConfig.reasoningEffort
@@ -238,7 +256,7 @@ final class CopilotCLIProvider: LLMProvider {
             }
             let retryArgs = Self.arguments(
                 executable: executable, prompt: prompt, model: requestConfig.model,
-                reasoningEffort: ""
+                reasoningEffort: "", disabledMCPServers: disabled
             )
             result = try await Self.runProcess(
                 executable: executable, arguments: retryArgs, timeout: 90
@@ -285,8 +303,11 @@ final class CopilotCLIProvider: LLMProvider {
             return false
         }
         let lowered = text.lowercased()
+        // Older CLIs: `Reasoning effort "x" is not supported for model "y"`.
+        // 1.0.104: `Model "y" does not support reasoning effort configuration`.
         return lowered.contains("reasoning effort")
-            && lowered.contains("not supported for model")
+            && (lowered.contains("not supported for model")
+                || lowered.contains("does not support reasoning effort"))
     }
 
     private static func looksUnauthenticated(_ text: String) -> Bool {
@@ -319,6 +340,17 @@ final class CopilotCLIProvider: LLMProvider {
         return split.suffix(lines).joined(separator: "\n")
     }
 
+    /// Every MCP server `copilot mcp list --json` reports. Best effort: a
+    /// failure means no servers are disabled, which is the previous behavior.
+    static func listMCPServerNames(executable: String) async -> [String] {
+        guard let result = try? await runProcess(
+            executable: executable,
+            arguments: (executable == "/usr/bin/env" ? ["copilot"] : []) + ["mcp", "list", "--json"],
+            timeout: 10
+        ), result.exitCode == 0 else { return [] }
+        return CopilotMCPServers.names(fromListJSON: result.stdout)
+    }
+
     private static func runProcess(executable: String, arguments: [String], timeout: Double) async throws -> ProcessResult {
         let workDir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("mancia-" + UUID().uuidString)
@@ -343,8 +375,10 @@ extension CopilotCLIProvider: ModelListingProvider {
         // Start discovery at the model's default effort. A stale effort from a
         // previously selected model must not prevent ACP from returning the
         // new model's supported values.
+        let disabled = await mcpServers.names(executable: executable)
         return await acpSidecar.availableModels(
-            config: CopilotACPConfig(executable: executable, model: model, reasoningEffort: "")
+            config: CopilotACPConfig(
+                executable: executable, model: model, reasoningEffort: "", disabledMCPServers: disabled)
         )
     }
 }
@@ -353,9 +387,11 @@ extension CopilotCLIProvider: WarmableLLMProvider {
     func prepareForPanel() async {
         let (path, model, reasoningEffort) = await config()
         let executable = Self.resolveExecutable(override: path.isEmpty ? nil : path)
+        let disabled = await mcpServers.names(executable: executable)
         await acpSidecar.prepare(
             config: CopilotACPConfig(
-                executable: executable, model: model, reasoningEffort: reasoningEffort)
+                executable: executable, model: model, reasoningEffort: reasoningEffort,
+                disabledMCPServers: disabled)
         )
     }
 
